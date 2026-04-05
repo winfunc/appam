@@ -1,0 +1,93 @@
+---
+title: OpenAI Provider
+description: Configure OpenAI Responses models with Appam's builder and reasoning helpers.
+---
+
+## Setup
+
+```bash
+export OPENAI_API_KEY="sk-..."
+```
+
+## Quick Start
+
+OpenAI is auto-detected from `openai/...`, `gpt-...`, `o1-...`, and `o3-...` model strings:
+
+```rust
+use appam::prelude::*;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let agent = Agent::quick(
+        "openai/gpt-5.4",
+        "You are a helpful assistant.",
+        vec![],
+    )?;
+
+    agent
+        .stream("Explain async/await in Rust.")
+        .on_content(|text| print!("{}", text))
+        .run()
+        .await?;
+
+    Ok(())
+}
+```
+
+## Explicit Builder Form
+
+```rust
+use appam::prelude::*;
+
+let agent = AgentBuilder::new("openai-agent")
+    .provider(LlmProvider::OpenAI)
+    .model("gpt-5.4")
+    .system_prompt("You are a helpful assistant.")
+    .build()?;
+```
+
+## Reasoning
+
+The OpenAI config in this crate supports these reasoning effort levels:
+
+- `None`
+- `Minimal`
+- `Low`
+- `Medium`
+- `High`
+- `XHigh`
+
+Use `openai_reasoning(...)` on the builder:
+
+```rust
+use appam::prelude::*;
+
+let agent = AgentBuilder::new("reasoning-agent")
+    .provider(LlmProvider::OpenAI)
+    .model("gpt-5.4")
+    .system_prompt("You are a reasoning assistant.")
+    .openai_reasoning(ReasoningConfig::high_effort())
+    .build()?;
+```
+
+Convenience constructors include `auto()`, `high_effort()`, `xhigh_effort()`, `low_latency()`, `minimal()`, and `no_reasoning()`.
+
+## GPT-5.4 Sampling Note
+
+The current OpenAI config code only allows `temperature`, `top_p`, and `top_logprobs` for GPT-5.4 when reasoning is in `None` mode. Use `ReasoningConfig::no_reasoning()` if you need those sampling controls on GPT-5.4.
+
+## Model-Aware Helpers
+
+The crate exposes model-aware helpers such as:
+
+- `default_reasoning_effort_for_model`
+- `model_supports_xhigh_reasoning`
+- `resolve_reasoning_effort_for_model`
+
+These are useful if your application chooses effort dynamically from a model string.
+
+## Example Binary
+
+```bash
+cargo run --example coding-agent-openai-responses
+```

@@ -1,0 +1,56 @@
+---
+title: Coding Agent (Google Vertex)
+description: A readline-based coding agent that targets Gemini through Appam's Vertex provider.
+---
+
+`examples/coding-agent-vertex.rs` demonstrates the Vertex provider path with Gemini models. The sample reads an optional model override from the environment, uses the shared coding tools, and keeps the provider setup minimal: no Vertex-only reasoning knobs are enabled in this example.
+
+## Run
+
+```bash
+export GOOGLE_VERTEX_API_KEY="your-api-key"
+# optional
+export GOOGLE_VERTEX_PROJECT="my-gcp-project"
+export GOOGLE_VERTEX_LOCATION="us-central1"
+export GOOGLE_VERTEX_MODEL="gemini-3.1-pro-preview"
+
+cargo run --example coding-agent-vertex
+```
+
+## What this example actually configures
+
+- `LlmProvider::Vertex`
+- Model from `GOOGLE_VERTEX_MODEL`, defaulting to `gemini-3.1-pro-preview`
+- `max_tokens(8192)`
+- `temperature(0.2)`
+- The shared coding tools: `read_file`, `write_file`, `bash`, and `list_files`
+
+## Key builder setup
+
+```rust
+let model = std::env::var("GOOGLE_VERTEX_MODEL")
+    .unwrap_or_else(|_| "gemini-3.1-pro-preview".to_string());
+
+let agent = AgentBuilder::new("vertex-coding-assistant")
+    .provider(LlmProvider::Vertex)
+    .model(model)
+    .system_prompt(
+        "You are an expert coding assistant powered by Gemini via Google Vertex AI. \
+         You have access to file operations, bash commands, and directory listing. \
+         Help users analyze code, refactor projects, debug issues, and manage files. \
+         Always think through problems step-by-step and use tools when appropriate.",
+    )
+    .with_tool(Arc::new(read_file()))
+    .with_tool(Arc::new(write_file()))
+    .with_tool(Arc::new(bash()))
+    .with_tool(Arc::new(list_files()))
+    .max_tokens(8192)
+    .temperature(0.2)
+    .build()?;
+```
+
+## Runtime behavior
+
+- `GOOGLE_VERTEX_PROJECT` and `GOOGLE_VERTEX_LOCATION` are optional and are only needed when you want project-scoped Vertex endpoints.
+- The loop streams normal content, reasoning content, tool calls, and tool results to the terminal.
+- The sample exits on `exit`, `quit`, or `bye`, like the other coding-agent binaries.

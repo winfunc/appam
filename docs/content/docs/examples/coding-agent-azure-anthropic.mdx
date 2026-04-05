@@ -1,0 +1,78 @@
+---
+title: Coding Agent (Azure Anthropic)
+description: A readline-based coding agent that targets Azure-hosted Anthropic-compatible endpoints through Appam's Anthropic client.
+---
+
+`examples/coding-agent-azure-anthropic.rs` shows the Azure-specific Anthropic provider path. It reads a full Azure Anthropic base URL or derives one from a resource name, targets the configured deployment name as the model, and keeps Anthropic features such as adaptive thinking, tool calls, retries, caching, and rate limiting.
+
+## Run
+
+```bash
+export AZURE_API_KEY="your-api-key"
+export AZURE_ANTHROPIC_BASE_URL="https://your-resource.services.ai.azure.com/anthropic"
+# or export AZURE_ANTHROPIC_RESOURCE="your-resource"
+export AZURE_ANTHROPIC_AUTH_METHOD="x_api_key"
+export AZURE_ANTHROPIC_MODEL="claude-opus-4-6"
+
+cargo run --example coding-agent-azure-anthropic
+```
+
+## Required and optional environment variables
+
+- `AZURE_ANTHROPIC_BASE_URL` or `AZURE_ANTHROPIC_RESOURCE` is required.
+- `AZURE_ANTHROPIC_AUTH_METHOD` defaults to `x_api_key`.
+- `AZURE_API_KEY` is accepted as the practical fallback credential.
+- `AZURE_ANTHROPIC_API_KEY` is used for explicit `x-api-key` auth.
+- `AZURE_ANTHROPIC_AUTH_TOKEN` is used for explicit bearer-token auth.
+- `AZURE_ANTHROPIC_MODEL` defaults to `claude-opus-4-6`.
+
+The example constructs Azure Anthropic Messages API URLs in the form:
+
+```text
+{base_url}/v1/messages
+```
+
+## What this example actually configures
+
+- `LlmProvider::AzureAnthropic { base_url, auth_method }`
+- The deployment name from `AZURE_ANTHROPIC_MODEL`
+- Anthropic adaptive thinking with `EffortLevel::Max`
+- Prompt caching with a one-hour TTL
+- Anthropic beta features for fine-grained tool streaming, context management, and interleaved thinking
+- Anthropic tool choice, rate limiting, and retry configuration
+- The shared coding tools: `read_file`, `write_file`, `bash`, and `list_files`
+
+## Key builder setup
+
+```rust
+let agent = AgentBuilder::new("azure-anthropic-coding-assistant")
+    .provider(LlmProvider::AzureAnthropic {
+        base_url: base_url.clone(),
+        auth_method: auth_method.clone(),
+    })
+    .model(&model)
+    .system_prompt(
+        "You are an advanced coding assistant powered by Claude Opus 4.6 via Azure Anthropic. \
+         You have access to file operations, bash commands, and directory listing. \
+         Use your adaptive thinking capabilities to reason through complex problems. \
+         Always explain your reasoning process and provide detailed analysis.",
+    )
+    .thinking(appam::llm::anthropic::ThinkingConfig::adaptive())
+    .effort(appam::llm::anthropic::EffortLevel::Max)
+    .caching(appam::llm::anthropic::CachingConfig {
+        enabled: true,
+        ttl: appam::llm::anthropic::CacheTTL::OneHour,
+    })
+    .with_tool(Arc::new(read_file()))
+    .with_tool(Arc::new(write_file()))
+    .with_tool(Arc::new(bash()))
+    .with_tool(Arc::new(list_files()))
+    .max_tokens(20000)
+    .build()?;
+```
+
+## Runtime behavior
+
+- The binary fails fast if no Azure Anthropic endpoint can be resolved.
+- It validates the credential shape required by the selected auth method before starting the session.
+- The terminal UI prints reasoning, tool calls, and tool results as the stream progresses.

@@ -1,0 +1,135 @@
+---
+title: ConsoleConsumer
+description: Stream consumer that prints events to stdout with configurable formatting and colors.
+---
+
+## Overview
+
+`ConsoleConsumer` is the default stream consumer for CLI applications. It prints LLM content to stdout, reasoning traces in cyan, and tool call information with box-drawing characters and status icons. Colors, reasoning display, and tool details are all independently configurable.
+
+**Import path:** `appam::agent::consumers::ConsoleConsumer`
+
+## Definition
+
+```rust
+pub struct ConsoleConsumer {
+    show_reasoning: bool,
+    show_tool_details: bool,
+    colored: bool,
+    last_was_reasoning: AtomicBool,
+}
+```
+
+## Constructor
+
+### `ConsoleConsumer::new`
+
+```rust
+pub fn new() -> Self
+```
+
+Creates a consumer with default settings: colors enabled, reasoning shown, tool details shown.
+
+`ConsoleConsumer` also implements `Default`.
+
+## Configuration Methods
+
+All configuration methods consume and return `self` for chaining.
+
+### `.with_reasoning`
+
+```rust
+pub fn with_reasoning(mut self, show: bool) -> Self
+```
+
+Enable or disable reasoning display. When enabled, model thinking/reasoning traces are printed in cyan to stdout.
+
+### `.with_tool_details`
+
+```rust
+pub fn with_tool_details(mut self, show: bool) -> Self
+```
+
+Enable or disable detailed tool information. When enabled, tool names, arguments, durations, and status icons are displayed.
+
+### `.with_colors`
+
+```rust
+pub fn with_colors(mut self, enabled: bool) -> Self
+```
+
+Enable or disable ANSI color codes. When disabled, all output is plain text.
+
+## Output Format
+
+| Event | Output |
+|-------|--------|
+| `SessionStarted` | Silent (no output) |
+| `Content` | Printed directly to stdout, flushed immediately |
+| `Reasoning` | Printed in cyan (`\x1b[36m`) to stdout |
+| `ToolCallStarted` | Yellow box-drawing format: tool name and arguments |
+| `ToolCallCompleted` | Green checkmark with tool name and duration |
+| `ToolCallFailed` | Red cross with tool name and error |
+| `TurnCompleted` | Silent |
+| `UsageUpdate` | Silent (tracked internally, not displayed) |
+| `Done` | Final newline |
+| `Error` | Printed to stderr in red |
+
+Tool call output example (with colors enabled):
+
+```
+╭─ Tool Call: read_file
+├─ Arguments: {"path": "src/main.rs"}
+╰─ Executing...
+✓ read_file completed (took 12.34ms)
+```
+
+## Usage
+
+### As a standalone consumer
+
+```rust
+use appam::prelude::*;
+use appam::agent::consumers::ConsoleConsumer;
+
+let agent = Agent::quick("anthropic/claude-sonnet-4-5", "You are helpful.", vec![])?;
+
+let consumer = ConsoleConsumer::new()
+    .with_colors(true)
+    .with_reasoning(true)
+    .with_tool_details(true);
+
+let session = agent.run_streaming("Hello!", Box::new(consumer)).await?;
+```
+
+### With other consumers via MultiConsumer
+
+```rust
+use appam::agent::streaming::MultiConsumer;
+use appam::agent::consumers::{ConsoleConsumer, TraceConsumer};
+use appam::config::TraceFormat;
+use std::path::Path;
+
+let trace = TraceConsumer::new(Path::new("logs"), "session-1", TraceFormat::Detailed)?;
+
+let multi = MultiConsumer::new()
+    .add(Box::new(ConsoleConsumer::new()))
+    .add(Box::new(trace));
+
+agent.run_streaming("Hello!", Box::new(multi)).await?;
+```
+
+### Minimal output
+
+Disable everything except raw content:
+
+```rust
+let consumer = ConsoleConsumer::new()
+    .with_colors(false)
+    .with_reasoning(false)
+    .with_tool_details(false);
+```
+
+## Default Behavior in Agents
+
+`ConsoleConsumer` is used automatically by `TomlAgent::run()` and `Agent::run()` (the default `run` implementation on the trait). When you call `agent.run("prompt")` without specifying a consumer, a `ConsoleConsumer` with default settings handles the output.

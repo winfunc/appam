@@ -1,0 +1,60 @@
+---
+title: Coding Agent (OpenRouter Completions)
+description: A readline-based coding agent that uses OpenRouter's completions path with provider routing and privacy controls.
+---
+
+`examples/coding-agent-openrouter-completions.rs` focuses on OpenRouter routing rather than provider-specific reasoning features. It configures preferred upstream providers, a fallback model list, and privacy-related routing flags while keeping the rest of the runtime identical to the other coding-agent samples.
+
+## Run
+
+```bash
+export OPENROUTER_API_KEY="sk-or-..."
+cargo run --example coding-agent-openrouter-completions
+```
+
+## What this example actually configures
+
+- `LlmProvider::OpenRouterCompletions`
+- Primary model `openai/gpt-4o`
+- Preferred upstream provider order of `anthropic`
+- `data_collection: Deny` and `zdr: true`
+- Fallback models `openai/gpt-4o` and `anthropic/claude-3.5-sonnet`
+- The shared coding tools: `read_file`, `write_file`, `bash`, and `list_files`
+
+## Key builder setup
+
+```rust
+let provider_prefs = appam::llm::openrouter::ProviderPreferences {
+    order: Some(vec!["anthropic".to_string()]),
+    data_collection: Some(appam::llm::openrouter::DataCollection::Deny),
+    zdr: Some(true),
+    ..Default::default()
+};
+
+let agent = AgentBuilder::new("gpt-coding-assistant")
+    .provider(LlmProvider::OpenRouterCompletions)
+    .model("openai/gpt-4o")
+    .system_prompt(
+        "You are an expert coding assistant powered by GPT-4o. \
+         You have access to file operations, bash commands, and directory listing. \
+         Help users analyze code, refactor projects, debug issues, and manage files. \
+         Always think through problems step-by-step and use tools when appropriate.",
+    )
+    .openrouter_provider_routing(provider_prefs)
+    .openrouter_models(vec![
+        "openai/gpt-4o".to_string(),
+        "anthropic/claude-3.5-sonnet".to_string(),
+    ])
+    .with_tool(Arc::new(read_file()))
+    .with_tool(Arc::new(write_file()))
+    .with_tool(Arc::new(bash()))
+    .with_tool(Arc::new(list_files()))
+    .max_tokens(20000)
+    .build()?;
+```
+
+## Runtime behavior
+
+- The example intentionally does not enable OpenRouter reasoning in this configuration.
+- The terminal output still wires up `.on_reasoning(...)`, so reasoning content will display if the upstream model emits it.
+- Tool calls and tool results are streamed to the console during each turn.

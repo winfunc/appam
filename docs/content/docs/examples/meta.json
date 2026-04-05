@@ -1,0 +1,14 @@
+{
+  "title": "Examples",
+  "pages": [
+    "coding-agent-anthropic",
+    "coding-agent-azure-anthropic",
+    "coding-agent-openai-codex",
+    "coding-agent-openai",
+    "coding-agent-bedrock",
+    "coding-agent-azure-openai",
+    "coding-agent-openrouter-completions",
+    "coding-agent-openrouter-responses",
+    "coding-agent-vertex"
+  ]
+}

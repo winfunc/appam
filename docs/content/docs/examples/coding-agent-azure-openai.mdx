@@ -1,0 +1,71 @@
+---
+title: Coding Agent (Azure OpenAI)
+description: A readline-based coding agent that targets Azure OpenAI deployments through Appam's Azure provider variant.
+---
+
+`examples/coding-agent-azure-openai.rs` shows the Azure-specific provider path. It reads the Azure resource name and API version from the environment, targets the configured deployment name as the model, and still uses Appam's OpenAI reasoning configuration surface.
+
+## Run
+
+```bash
+export AZURE_OPENAI_RESOURCE="your-resource-name"
+export AZURE_OPENAI_API_KEY="your-api-key"
+# or export OPENAI_API_KEY="your-api-key"
+export AZURE_OPENAI_API_VERSION="2025-04-01-preview"
+export AZURE_OPENAI_MODEL="gpt-5.4"
+
+cargo run --example coding-agent-azure-openai
+```
+
+## Required and optional environment variables
+
+- `AZURE_OPENAI_RESOURCE` is required.
+- `AZURE_OPENAI_API_KEY` is preferred, and `OPENAI_API_KEY` is accepted as a fallback.
+- `AZURE_OPENAI_API_VERSION` defaults to `2025-04-01-preview`.
+- `AZURE_OPENAI_MODEL` defaults to `gpt-5.4`.
+
+The example constructs Azure Responses API URLs in the form:
+
+```text
+https://{resource_name}.openai.azure.com/openai/deployments/{model}/responses?api-version={version}
+```
+
+## What this example actually configures
+
+- `LlmProvider::AzureOpenAI { resource_name, api_version }`
+- The model name from `AZURE_OPENAI_MODEL`
+- OpenAI reasoning with `ReasoningEffort::High` and `ReasoningSummary::Detailed`
+- The shared coding tools: `read_file`, `write_file`, `bash`, and `list_files`
+
+## Key builder setup
+
+```rust
+let agent = AgentBuilder::new("azure-openai-coding-assistant")
+    .provider(LlmProvider::AzureOpenAI {
+        resource_name: resource_name.clone(),
+        api_version: api_version.clone(),
+    })
+    .model(&model)
+    .system_prompt(
+        "You are an expert coding assistant powered by GPT via Azure OpenAI. \
+         You have access to file operations, bash commands, and directory listing. \
+         Help users analyze code, refactor projects, debug issues, and manage files. \
+         Always think through problems step-by-step and use tools when appropriate.",
+    )
+    .openai_reasoning(appam::llm::openai::ReasoningConfig {
+        effort: Some(appam::llm::openai::ReasoningEffort::High),
+        summary: Some(appam::llm::openai::ReasoningSummary::Detailed),
+    })
+    .with_tool(Arc::new(read_file()))
+    .with_tool(Arc::new(write_file()))
+    .with_tool(Arc::new(bash()))
+    .with_tool(Arc::new(list_files()))
+    .max_tokens(8192)
+    .build()?;
+```
+
+## Runtime behavior
+
+- The binary fails fast if `AZURE_OPENAI_RESOURCE` is unset.
+- It also fails fast if neither `AZURE_OPENAI_API_KEY` nor `OPENAI_API_KEY` is present.
+- Reasoning text is streamed to a dedicated terminal section with `.on_reasoning(...)`.

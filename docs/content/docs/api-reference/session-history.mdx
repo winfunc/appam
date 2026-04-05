@@ -1,0 +1,271 @@
+---
+title: SessionHistory
+description: SQLite-backed persistence layer for session storage and retrieval.
+---
+
+## Overview
+
+`SessionHistory` provides SQLite-backed persistence for agent sessions. It manages storing, loading, listing, and cleaning up conversation histories. When history is disabled in configuration, all operations become no-ops, so callers do not need conditional logic.
+
+## Definition
+
+```rust
+pub struct SessionHistory {
+    store: Option<SessionStore>,  // None when disabled
+    config: HistoryConfig,
+}
+```
+
+## Configuration
+
+`SessionHistory` is configured through `HistoryConfig`:
+
+```rust
+pub struct HistoryConfig {
+    /// Enable session history persistence (default: false)
+    pub enabled: bool,
+    /// SQLite database file path (default: "data/appam_sessions.db")
+    pub db_path: PathBuf,
+    /// Automatically save sessions after completion (default: true)
+    pub auto_save: bool,
+    /// Maximum sessions to retain; None = unlimited
+    pub max_sessions: Option<usize>,
+}
+```
+
+When `enabled` is `false`, `SessionHistory` initializes without opening a database and all methods return empty results or succeed silently.
+
+## Construction
+
+```rust
+use appam::agent::history::SessionHistory;
+use appam::config::HistoryConfig;
+
+let history = SessionHistory::new(HistoryConfig {
+    enabled: true,
+    db_path: "data/sessions.db".into(),
+    auto_save: true,
+    max_sessions: Some(100),
+}).await?;
+```
+
+The constructor creates the database file and parent directories if they do not exist, and runs schema migrations automatically.
+
+## SessionSummary
+
+Listing operations return `SessionSummary` structs instead of loading full message histories:
+
+```rust
+pub struct SessionSummary {
+    pub id: String,
+    pub agent_name: String,
+    pub model: String,
+    pub message_count: usize,
+    pub turn_count: i32,
+    pub tool_call_count: i32,
+    pub started_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub ended_at: Option<DateTime<Utc>>,
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `id` | Unique session identifier |
+| `agent_name` | Name of the agent that produced this session |
+| `model` | Model identifier used |
+| `message_count` | Total number of messages in the conversation |
+| `turn_count` | Number of assistant response turns |
+| `tool_call_count` | Number of tool invocations made |
+| `started_at` | When the session was created |
+| `updated_at` | When the session was last modified |
+| `ended_at` | When the session completed (`None` if still active) |
+
+## Methods
+
+### `SessionHistory::new(config) -> Result<Self>`
+
+Creates a new session history manager. Opens the SQLite database and runs migrations when `enabled` is `true`. When disabled, the internal store is `None` and all operations are no-ops.
+
+```rust
+let history = SessionHistory::new(config).await?;
+```
+
+### `.is_enabled() -> bool`
+
+Returns whether history persistence is active.
+
+```rust
+if history.is_enabled() {
+    println!("Session history is enabled");
+}
+```
+
+### `.create_session(session) -> Result<()>`
+
+Inserts a new session into the database. Call this at the start of an agent run to register the session. No-op when disabled.
+
+```rust
+history.create_session(&session).await?;
+```
+
+### `.save_session(session) -> Result<()>`
+
+Saves or updates a session in the database (upsert). If the session already exists, its messages, timestamps, and usage are updated. If it does not exist, a new row is inserted.
+
+```rust
+let session = agent.run("Hello!").await?;
+history.save_session(&session).await?;
+```
+
+### `.load_session(session_id) -> Result<Option<Session>>`
+
+Loads a session by its ID. Returns `None` if history is disabled or the session does not exist.
+
+```rust
+let session = history.load_session("abc-123").await?;
+if let Some(s) = session {
+    println!("Loaded {} messages", s.messages.len());
+}
+```
+
+### `.append_messages(session_id, messages) -> Result<()>`
+
+Appends messages to an existing session without rewriting the entire record. More efficient than load-modify-save when only adding new messages.
+
+```rust
+use appam::llm::ChatMessage;
+
+let new_messages: Vec<ChatMessage> = vec![/* ... */];
+history.append_messages("abc-123", &new_messages).await?;
+```
+
+Returns an error if the session does not exist.
+
+### `.list_sessions() -> Result<Vec<SessionSummary>>`
+
+Lists all sessions ordered by most recent activity (newest first). Returns summaries without loading full message histories.
+
+```rust
+let sessions = history.list_sessions().await?;
+for summary in &sessions {
+    println!(
+        "[{}] {} - {} messages, {} tool calls",
+        summary.id, summary.agent_name,
+        summary.message_count, summary.tool_call_count
+    );
+}
+```
+
+### `.list_agent_sessions(agent_name) -> Result<Vec<SessionSummary>>`
+
+Lists sessions for a specific agent, ordered by most recent activity.
+
+```rust
+let sessions = history.list_agent_sessions("research-agent").await?;
+```
+
+### `.delete_session(session_id) -> Result<bool>`
+
+Deletes a session by ID. Returns `true` if the session existed and was deleted, `false` if it was not found or history is disabled.
+
+```rust
+let was_deleted = history.delete_session("abc-123").await?;
+```
+
+### `.session_count() -> Result<usize>`
+
+Returns the total number of stored sessions. Returns `0` when history is disabled.
+
+```rust
+let count = history.session_count().await?;
+println!("{} sessions stored", count);
+```
+
+### `.enforce_max_sessions() -> Result<usize>`
+
+Deletes the oldest sessions that exceed the `max_sessions` limit configured in `HistoryConfig`. Returns the number of sessions deleted. If `max_sessions` is `None` or the current count is within the limit, this is a no-op.
+
+```rust
+let deleted = history.enforce_max_sessions().await?;
+if deleted > 0 {
+    println!("Cleaned up {} old sessions", deleted);
+}
+```
+
+## Full Example
+
+```rust
+use appam::prelude::*;
+use appam::agent::history::SessionHistory;
+use appam::config::HistoryConfig;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Initialize history
+    let history = SessionHistory::new(HistoryConfig {
+        enabled: true,
+        db_path: "data/sessions.db".into(),
+        auto_save: true,
+        max_sessions: Some(50),
+    }).await?;
+
+    // Create and run an agent
+    let agent = Agent::quick(
+        "anthropic/claude-sonnet-4-5",
+        "You are a helpful assistant.",
+        vec![],
+    )?;
+
+    // First turn
+    let session = agent.run("Hello!").await?;
+    history.save_session(&session).await?;
+
+    // List sessions
+    let sessions = history.list_sessions().await?;
+    println!("Stored sessions: {}", sessions.len());
+
+    // Continue the conversation
+    let continued = agent
+        .continue_session(&session.session_id, "What did I say?")
+        .await?;
+    history.save_session(&continued).await?;
+
+    // Load session later
+    let loaded = history.load_session(&session.session_id).await?;
+    if let Some(s) = loaded {
+        println!("Loaded session with {} messages", s.messages.len());
+    }
+
+    // Enforce session limit
+    history.enforce_max_sessions().await?;
+
+    Ok(())
+}
+```
+
+## Database Schema
+
+SessionHistory uses a SQLite table named `session_history` with the following columns:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | `TEXT PRIMARY KEY` | Session ID |
+| `agent_name` | `TEXT NOT NULL` | Agent name |
+| `model` | `TEXT NOT NULL` | Model identifier |
+| `messages` | `TEXT NOT NULL` | JSON-serialized `Vec<ChatMessage>` |
+| `metadata` | `TEXT` | Reserved for future use |
+| `started_at` | `TEXT NOT NULL` | RFC 3339 timestamp |
+| `updated_at` | `TEXT NOT NULL` | RFC 3339 timestamp |
+| `ended_at` | `TEXT` | RFC 3339 timestamp (nullable) |
+| `turn_count` | `INTEGER` | Number of assistant turns |
+| `tool_call_count` | `INTEGER` | Number of tool invocations |
+| `usage` | `TEXT` | JSON-serialized `AggregatedUsage` |
+
+Indexes are created on `updated_at`, `agent_name`, and `started_at` for efficient querying.
+
+## Related Types
+
+- [Session](/docs/api-reference/session) -- the session struct stored by this manager
+- [HistoryConfig](/docs/api-reference/app-config) -- configuration for session persistence
+- [Agent trait](/docs/api-reference/agent-trait) -- `continue_session()` relies on session history

@@ -1,0 +1,191 @@
+---
+title: AgentConfigBuilder
+description: Builder for generating agent TOML configuration files with tools.
+---
+
+## Overview
+
+`AgentConfigBuilder` provides a fluent API for constructing agent configurations programmatically. The resulting `AgentConfig` can be saved to a TOML file (loadable with `TomlAgent::from_file()`) or used directly.
+
+Unlike [`AgentBuilder`](/docs/api-reference/agent-builder) which creates live agent instances with Rust tool implementations, `AgentConfigBuilder` generates a serializable configuration that references tool schemas and external implementations (Python scripts or Rust modules).
+
+## Constructor
+
+### `AgentConfigBuilder::new(name: impl Into<String>) -> Self`
+
+Creates a new agent config builder with the given agent name.
+
+```rust
+use appam::config::AgentConfigBuilder;
+
+let builder = AgentConfigBuilder::new("my-agent");
+```
+
+## Builder Methods
+
+All methods consume and return `Self`, enabling method chaining.
+
+### Agent Metadata
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `model` | `.model(impl Into<String>) -> Self` | Set the LLM model identifier |
+| `system_prompt` | `.system_prompt(impl Into<PathBuf>) -> Self` | Set the path to the system prompt file |
+| `description` | `.description(impl Into<String>) -> Self` | Set a human-readable agent description |
+| `version` | `.version(impl Into<String>) -> Self` | Set the agent version string |
+
+### Tool Registration
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `add_python_tool` | `.add_python_tool(name, schema, script) -> Self` | Register a tool implemented as a Python script |
+| `add_rust_tool` | `.add_rust_tool(name, schema, module) -> Self` | Register a tool implemented as a Rust module |
+| `add_tool` | `.add_tool(ToolConfig) -> Self` | Register a tool configuration directly |
+
+#### `add_python_tool`
+
+```rust
+.add_python_tool(
+    name: impl Into<String>,     // Tool name
+    schema: impl Into<PathBuf>,  // Path to JSON schema file
+    script: impl Into<PathBuf>,  // Path to Python script
+) -> Self
+```
+
+Adds a tool backed by a Python script. The schema file defines the tool's input parameters as JSON Schema. The Python script is executed when the tool is invoked.
+
+#### `add_rust_tool`
+
+```rust
+.add_rust_tool(
+    name: impl Into<String>,     // Tool name
+    schema: impl Into<PathBuf>,  // Path to JSON schema file
+    module: impl Into<String>,   // Rust module path
+) -> Self
+```
+
+Adds a tool backed by a Rust module. The module path references a Rust implementation (e.g., `"appam::tools::builtin::bash"`).
+
+## Build and Save
+
+### `.build() -> Result<AgentConfig>`
+
+Consumes the builder and produces an `AgentConfig`. Returns an error if `system_prompt` has not been set.
+
+```rust
+let config = AgentConfigBuilder::new("my-agent")
+    .model("claude-sonnet-4-5")
+    .system_prompt("prompt.txt")
+    .build()?;
+```
+
+### `.save_to_file(path: impl AsRef<Path>) -> Result<()>`
+
+Builds the configuration and writes it as a TOML file at the given path. Combines `.build()` and serialization in a single step.
+
+```rust
+AgentConfigBuilder::new("my-agent")
+    .model("claude-sonnet-4-5")
+    .system_prompt("prompt.txt")
+    .save_to_file("my-agent.toml")?;
+```
+
+The generated TOML can be loaded with `TomlAgent::from_file()`:
+
+```rust
+let agent = TomlAgent::from_file("my-agent.toml")?;
+agent.run("Hello!").await?;
+```
+
+## Examples
+
+### Minimal Agent
+
+```rust
+use appam::config::AgentConfigBuilder;
+
+AgentConfigBuilder::new("assistant")
+    .model("claude-sonnet-4-5")
+    .system_prompt("prompts/assistant.txt")
+    .save_to_file("assistant.toml")?;
+```
+
+### Agent with Tools
+
+```rust
+use appam::config::AgentConfigBuilder;
+
+AgentConfigBuilder::new("search-agent")
+    .model("claude-sonnet-4-5")
+    .system_prompt("prompts/search.txt")
+    .description("An agent that can search the web and format results")
+    .version("1.0.0")
+    .add_python_tool("search", "schemas/search.json", "tools/search.py")
+    .add_python_tool("summarize", "schemas/summarize.json", "tools/summarize.py")
+    .add_rust_tool("format", "schemas/format.json", "myapp::tools::format")
+    .save_to_file("search-agent.toml")?;
+```
+
+### Generated TOML Structure
+
+The above example generates a TOML file with this structure:
+
+```toml
+[agent]
+name = "search-agent"
+model = "claude-sonnet-4-5"
+system_prompt = "prompts/search.txt"
+description = "An agent that can search the web and format results"
+version = "1.0.0"
+
+[[tools]]
+name = "search"
+schema = "schemas/search.json"
+
+[tools.implementation.python]
+script = "tools/search.py"
+
+[[tools]]
+name = "summarize"
+schema = "schemas/summarize.json"
+
+[tools.implementation.python]
+script = "tools/summarize.py"
+
+[[tools]]
+name = "format"
+schema = "schemas/format.json"
+
+[tools.implementation.rust]
+module = "myapp::tools::format"
+```
+
+### Build Without Saving
+
+```rust
+use appam::config::AgentConfigBuilder;
+
+let config = AgentConfigBuilder::new("test-agent")
+    .model("gpt-4o")
+    .system_prompt("prompt.txt")
+    .add_python_tool("echo", "echo.json", "echo.py")
+    .build()?;
+
+// Inspect the config programmatically
+assert_eq!(config.agent.name, "test-agent");
+assert_eq!(config.tools.len(), 1);
+```
+
+## Error Handling
+
+`.build()` and `.save_to_file()` return `Result` and will fail if:
+
+- **System prompt not set** -- The `system_prompt` field is required. Omitting it returns an error: `"System prompt path must be set"`.
+- **File write failure** -- `.save_to_file()` returns an error if the TOML cannot be serialized or the file cannot be written.
+
+## See Also
+
+- [`TomlAgent`](/docs/api-reference/toml-agent) -- Load and run agents from TOML configuration files
+- [`AgentBuilder`](/docs/api-reference/agent-builder) -- Build live agent instances with Rust tool implementations
+- [`AppConfigBuilder`](/docs/api-reference/app-config-builder) -- Build global application configuration
+- [`ToolSpec`](/docs/api-reference/tool-spec) -- Tool specification format used by the LLM

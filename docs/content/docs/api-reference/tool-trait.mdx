@@ -1,0 +1,143 @@
+---
+title: Tool Trait
+description: The core trait for defining agent tools.
+---
+
+The `Tool` trait is the fundamental interface for all tools in Appam. Tools are executable functions exposed to the LLM via JSON schemas. The LLM decides when to invoke tools based on the user's query, the system prompt, and the tool specifications.
+
+## Trait Definition
+
+```rust
+pub trait Tool: Send + Sync {
+    fn name(&self) -> &str;
+    fn spec(&self) -> Result<ToolSpec>;
+    fn execute(&self, args: serde_json::Value) -> Result<serde_json::Value>;
+}
+```
+
+The trait requires `Send + Sync` bounds, ensuring tools can be used safely in async runtimes and shared across threads via `Arc<dyn Tool>`.
+
+## Methods
+
+### `name()`
+
+```rust
+fn name(&self) -> &str;
+```
+
+Returns the unique, stable function name for this tool. This name must match the `name` field in the tool's [`ToolSpec`](/docs/api-reference/tool-spec) and is used by the runtime to route LLM tool calls to the correct implementation.
+
+### `spec()`
+
+```rust
+fn spec(&self) -> Result<ToolSpec>;
+```
+
+Returns the tool specification sent to the LLM. The spec includes the function name, a human-readable description, and a JSON Schema defining the parameter types and constraints.
+
+Returns `Result` because the specification may be loaded from an external file or generated dynamically.
+
+### `execute()`
+
+```rust
+fn execute(&self, args: serde_json::Value) -> Result<serde_json::Value>;
+```
+
+Executes the tool with the given arguments. The `args` value is a JSON object matching the schema from `spec()`. The return value is a JSON value that gets sent back to the LLM as the tool result.
+
+Returns `Result` to propagate validation failures, execution errors, or serialization issues.
+
+**Security considerations:** Tool implementations must validate all inputs. Never trust arguments from the LLM -- they may be malformed, incomplete, or adversarial. Avoid shell injection, path traversal, and unbounded resource consumption.
+
+## Implementation Example
+
+```rust
+use appam::prelude::*;
+
+struct ReadFileTool;
+
+impl Tool for ReadFileTool {
+    fn name(&self) -> &str {
+        "read_file"
+    }
+
+    fn spec(&self) -> Result<ToolSpec> {
+        Ok(serde_json::from_value(json!({
+            "type": "function",
+            "name": "read_file",
+            "description": "Read the contents of a file at the given path",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Absolute path to the file"
+                    }
+                },
+                "required": ["path"]
+            }
+        }))?)
+    }
+
+    fn execute(&self, args: Value) -> Result<Value> {
+        let path = args["path"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing 'path' argument"))?;
+
+        // Validate the path (security!)
+        let path = std::path::Path::new(path);
+        if !path.is_absolute() {
+            bail!("Path must be absolute");
+        }
+
+        let content = std::fs::read_to_string(path)
+            .context("Failed to read file")?;
+
+        Ok(json!({ "content": content }))
+    }
+}
+```
+
+## Using the `#[tool]` Macro
+
+For simpler tools, the `#[tool]` procedural macro eliminates boilerplate. The macro generates the `Tool` implementation automatically from a function signature:
+
+```rust
+use appam::prelude::*;
+
+#[tool(description = "Greet someone by name")]
+fn greet(name: String) -> Result<Value> {
+    Ok(json!({ "greeting": format!("Hello, {}!", name) }))
+}
+
+// greet() returns a struct that implements Tool
+let tool = greet();
+```
+
+The `#[derive(Schema)]` macro can be used on structs to auto-generate JSON Schema for complex parameter types.
+
+## Registering Tools
+
+Tools are registered with agents via:
+
+- [`AgentBuilder::with_tool()`](/docs/api-reference/agent-builder) -- During agent construction
+- [`AgentBuilder::with_tools()`](/docs/api-reference/agent-builder) -- Multiple tools at once
+- [`RuntimeAgent::add_tool()`](/docs/api-reference/runtime-agent) -- After construction
+- [`TomlAgent::with_additional_tool()`](/docs/api-reference/toml-agent) -- Extending TOML agents
+- [`ToolRegistry::register()`](/docs/api-reference/tool-registry) -- Direct registry access
+
+All of these accept `Arc<dyn Tool>`. Use the [`AgentBuilderToolExt`](/docs/api-reference/agent-builder) trait to avoid manual `Arc` wrapping.
+
+## Execution Flow
+
+When the LLM decides to use a tool:
+
+1. The LLM emits a tool call with the tool name and JSON arguments
+2. The runtime resolves the tool by name via the `ToolRegistry`
+3. `tool.execute(args)` is called with the parsed JSON arguments
+4. The result (or error) is sent back to the LLM as a tool result message
+5. The LLM incorporates the result into its response
+
+## Source
+
+Defined in [`src/tools/mod.rs`](https://github.com/winfunc/appam/blob/main/src/tools/mod.rs).

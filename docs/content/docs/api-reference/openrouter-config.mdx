@@ -1,0 +1,47 @@
+---
+title: OpenRouterConfig
+description: Shared config used by Appam's OpenRouter Completions and Responses clients.
+---
+
+`OpenRouterConfig` is reused across both OpenRouter backends.
+
+## Definition
+
+```rust
+pub struct OpenRouterConfig {
+    pub api_key: Option<String>,
+    pub base_url: String,
+    pub model: String,
+    pub http_referer: Option<String>,
+    pub x_title: Option<String>,
+    pub stream: bool,
+    pub max_output_tokens: Option<u32>,
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub reasoning: Option<ReasoningConfig>,
+    pub provider_preferences: Option<ProviderPreferences>,
+    pub transforms: Option<Vec<String>>,
+    pub models: Option<Vec<String>>,
+}
+```
+
+## Defaults from `Default`
+
+- `base_url = "https://openrouter.ai/api/v1"`
+- `model = "openai/gpt-5"`
+- `stream = true`
+- `max_output_tokens = Some(9000)`
+
+## Routing controls
+
+`provider_preferences`, `transforms`, and `models` are available on the shared config, but the code comments and builder API treat them primarily as OpenRouter Completions controls. The Responses client is constructed from the same config object, but not every field is meaningful to that backend.
+
+## Builder hooks
+
+```rust
+.openrouter_api_key(...)
+.openrouter_reasoning(...)
+.openrouter_provider_routing(...)
+.openrouter_transforms(...)
+.openrouter_models(...)
+```

@@ -1,0 +1,908 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Appam Trace Visualizer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-primary: #0f1419;
+            --bg-secondary: #1a1f29;
+            --bg-tertiary: #252b36;
+            --bg-hover: #2d3540;
+            --border-color: #3a4149;
+            --text-primary: #e6edf3;
+            --text-secondary: #8b949e;
+            --text-muted: #6e7681;
+            --accent-blue: #58a6ff;
+            --accent-green: #3fb950;
+            --accent-orange: #d29922;
+            --accent-purple: #bc8cff;
+            --accent-red: #f85149;
+            --shadow: rgba(0, 0, 0, 0.3);
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 320px;
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .sidebar-header {
+            padding: 20px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .sidebar-header h1 {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .sidebar-header p {
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        .trace-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+        }
+
+        .trace-item {
+            padding: 12px;
+            margin-bottom: 4px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .trace-item:hover {
+            background: var(--bg-hover);
+            border-color: var(--accent-blue);
+        }
+
+        .trace-item.active {
+            background: var(--bg-hover);
+            border-color: var(--accent-blue);
+        }
+
+        .trace-item-id {
+            font-size: 13px;
+            font-weight: 500;
+            margin-bottom: 4px;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+        }
+
+        .trace-item-meta {
+            font-size: 11px;
+            color: var(--text-muted);
+            display: flex;
+            justify-content: space-between;
+            margin-top: 6px;
+        }
+
+        .trace-badge {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 10px;
+            font-weight: 500;
+            text-transform: uppercase;
+            background: var(--bg-primary);
+        }
+
+        .badge-json { color: var(--accent-green); }
+        .badge-jsonl { color: var(--accent-orange); }
+
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .toolbar {
+            padding: 16px 20px;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .view-tabs {
+            display: flex;
+            gap: 8px;
+        }
+
+        .view-tab {
+            padding: 8px 16px;
+            background: transparent;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-secondary);
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .view-tab:hover {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+
+        .view-tab.active {
+            background: var(--accent-blue);
+            color: white;
+            border-color: var(--accent-blue);
+        }
+
+        .session-info {
+            margin-left: auto;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .session-info-item {
+            display: inline-block;
+            margin-left: 16px;
+        }
+
+        .session-info-label {
+            color: var(--text-muted);
+            margin-right: 4px;
+        }
+
+        .content-area {
+            flex: 1;
+            overflow: auto;
+            padding: 20px;
+        }
+
+        .view-container {
+            display: none;
+        }
+
+        .view-container.active {
+            display: block;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 80px 20px;
+            color: var(--text-secondary);
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-secondary);
+        }
+
+        /* Timeline View */
+        .timeline-header {
+            padding: 20px;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            margin-bottom: 24px;
+        }
+
+        .timeline-meta {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-top: 16px;
+        }
+
+        .timeline-meta-item {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .timeline-meta-label {
+            font-size: 11px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+
+        .timeline-meta-value {
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .event-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-left: 3px solid var(--accent-blue);
+            border-radius: 6px;
+            padding: 16px;
+            margin-bottom: 12px;
+            transition: all 0.2s;
+        }
+
+        .event-card:hover {
+            border-color: var(--accent-blue);
+            box-shadow: 0 4px 12px var(--shadow);
+        }
+
+        .event-card.user { border-left-color: var(--accent-blue); }
+        .event-card.assistant { border-left-color: var(--accent-green); }
+        .event-card.tool { border-left-color: var(--accent-orange); }
+        .event-card.reasoning { border-left-color: var(--accent-purple); }
+        .event-card.error { border-left-color: var(--accent-red); }
+
+        .event-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+
+        .event-type {
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .event-timestamp {
+            font-size: 11px;
+            color: var(--text-muted);
+            font-family: 'SF Mono', Monaco, monospace;
+        }
+
+        .event-content {
+            font-size: 13px;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .event-data {
+            margin-top: 12px;
+            padding: 12px;
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+            font-size: 12px;
+            font-family: 'SF Mono', Monaco, monospace;
+        }
+
+        /* Graph View */
+        #graph-canvas {
+            width: 100%;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+        }
+
+        .graph-legend {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+            padding: 16px;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+        }
+
+        .legend-color {
+            width: 16px;
+            height: 16px;
+            border-radius: 3px;
+        }
+
+        /* Raw JSON View */
+        .json-toolbar {
+            margin-bottom: 16px;
+            display: flex;
+            gap: 8px;
+        }
+
+        .json-button {
+            padding: 8px 16px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .json-button:hover {
+            background: var(--bg-hover);
+            border-color: var(--accent-blue);
+        }
+
+        .json-container {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 20px;
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 12px;
+            line-height: 1.6;
+            overflow: auto;
+            max-height: calc(100vh - 250px);
+        }
+
+        .json-key {
+            color: var(--accent-blue);
+        }
+
+        .json-string {
+            color: var(--accent-green);
+        }
+
+        .json-number {
+            color: var(--accent-orange);
+        }
+
+        .json-boolean {
+            color: var(--accent-purple);
+        }
+
+        .json-null {
+            color: var(--text-muted);
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 10px;
+            height: 10px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--bg-primary);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-color);
+            border-radius: 5px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-muted);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <h1>🔍 Trace Visualizer</h1>
+                <p>Session traces and logs</p>
+            </div>
+            <div class="trace-list" id="traceList">
+                <div class="loading">Loading traces...</div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <div class="toolbar">
+                <div class="view-tabs">
+                    <button class="view-tab active" data-view="timeline">Timeline</button>
+                    <button class="view-tab" data-view="graph">Graph</button>
+                    <button class="view-tab" data-view="raw">Raw JSON</button>
+                </div>
+                <div class="session-info" id="sessionInfo"></div>
+            </div>
+
+            <div class="content-area">
+                <!-- Timeline View -->
+                <div class="view-container active" id="timeline-view">
+                    <div class="empty-state">
+                        <div class="empty-state-icon">📊</div>
+                        <p>Select a trace from the sidebar to view details</p>
+                    </div>
+                </div>
+
+                <!-- Graph View -->
+                <div class="view-container" id="graph-view">
+                    <div class="empty-state">
+                        <div class="empty-state-icon">📈</div>
+                        <p>Select a trace from the sidebar to view graph</p>
+                    </div>
+                </div>
+
+                <!-- Raw JSON View -->
+                <div class="view-container" id="raw-view">
+                    <div class="empty-state">
+                        <div class="empty-state-icon">📄</div>
+                        <p>Select a trace from the sidebar to view raw JSON</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // State
+        let traces = [];
+        let currentTrace = null;
+        let currentView = 'timeline';
+
+        // Initialize
+        async function init() {
+            await loadTraces();
+            setupEventListeners();
+        }
+
+        // Load all traces
+        async function loadTraces() {
+            try {
+                const response = await fetch('/api/traces');
+                traces = await response.json();
+                renderTraceList();
+            } catch (error) {
+                console.error('Failed to load traces:', error);
+                document.getElementById('traceList').innerHTML = `
+                    <div class="empty-state">
+                        <p>Failed to load traces</p>
+                        <p style="font-size: 11px; margin-top: 8px;">${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+
+        // Render trace list in sidebar
+        function renderTraceList() {
+            const traceList = document.getElementById('traceList');
+
+            if (traces.length === 0) {
+                traceList.innerHTML = `
+                    <div class="empty-state">
+                        <p>No traces found</p>
+                    </div>
+                `;
+                return;
+            }
+
+            traceList.innerHTML = traces.map(trace => {
+                const date = new Date(trace.modified);
+                const formatClass = trace.format === 'json' ? 'badge-json' : 'badge-jsonl';
+
+                return `
+                    <div class="trace-item" data-trace-id="${trace.id}">
+                        <div class="trace-item-id">${trace.id.substring(0, 16)}...</div>
+                        <div class="trace-item-meta">
+                            <span class="trace-badge ${formatClass}">${trace.format}</span>
+                            <span>${formatRelativeTime(date)}</span>
+                        </div>
+                        <div class="trace-item-meta">
+                            <span>${formatFileSize(trace.size)}</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            // Add click handlers
+            document.querySelectorAll('.trace-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    const traceId = item.dataset.traceId;
+                    loadTrace(traceId);
+                });
+            });
+        }
+
+        // Load a specific trace
+        async function loadTrace(traceId) {
+            try {
+                // Update active state in sidebar
+                document.querySelectorAll('.trace-item').forEach(item => {
+                    item.classList.toggle('active', item.dataset.traceId === traceId);
+                });
+
+                // Show loading
+                showLoading();
+
+                const response = await fetch(`/api/traces/${traceId}`);
+                currentTrace = await response.json();
+
+                renderTrace();
+            } catch (error) {
+                console.error('Failed to load trace:', error);
+                showError('Failed to load trace: ' + error.message);
+            }
+        }
+
+        // Render current trace based on active view
+        function renderTrace() {
+            if (!currentTrace) return;
+
+            updateSessionInfo();
+
+            switch (currentView) {
+                case 'timeline':
+                    renderTimelineView();
+                    break;
+                case 'graph':
+                    renderGraphView();
+                    break;
+                case 'raw':
+                    renderRawView();
+                    break;
+            }
+        }
+
+        // Update session info in toolbar
+        function updateSessionInfo() {
+            const info = document.getElementById('sessionInfo');
+            const parts = [];
+
+            if (currentTrace.agent_name) {
+                parts.push(`<span class="session-info-item"><span class="session-info-label">Agent:</span>${currentTrace.agent_name}</span>`);
+            }
+
+            if (currentTrace.model) {
+                parts.push(`<span class="session-info-item"><span class="session-info-label">Model:</span>${currentTrace.model}</span>`);
+            }
+
+            if (currentTrace.total_duration_ms) {
+                parts.push(`<span class="session-info-item"><span class="session-info-label">Duration:</span>${(currentTrace.total_duration_ms / 1000).toFixed(2)}s</span>`);
+            }
+
+            parts.push(`<span class="session-info-item"><span class="session-info-label">Events:</span>${currentTrace.events.length}</span>`);
+
+            info.innerHTML = parts.join('');
+        }
+
+        // Render timeline view
+        function renderTimelineView() {
+            const container = document.getElementById('timeline-view');
+
+            const headerHTML = `
+                <div class="timeline-header">
+                    <h2 style="font-size: 16px; margin-bottom: 12px;">Session ${currentTrace.session_id}</h2>
+                    <div class="timeline-meta">
+                        ${currentTrace.agent_name ? `
+                            <div class="timeline-meta-item">
+                                <div class="timeline-meta-label">Agent</div>
+                                <div class="timeline-meta-value">${currentTrace.agent_name}</div>
+                            </div>
+                        ` : ''}
+                        ${currentTrace.model ? `
+                            <div class="timeline-meta-item">
+                                <div class="timeline-meta-label">Model</div>
+                                <div class="timeline-meta-value">${currentTrace.model}</div>
+                            </div>
+                        ` : ''}
+                        ${currentTrace.started_at ? `
+                            <div class="timeline-meta-item">
+                                <div class="timeline-meta-label">Started</div>
+                                <div class="timeline-meta-value">${new Date(currentTrace.started_at).toLocaleString()}</div>
+                            </div>
+                        ` : ''}
+                        ${currentTrace.total_duration_ms ? `
+                            <div class="timeline-meta-item">
+                                <div class="timeline-meta-label">Duration</div>
+                                <div class="timeline-meta-value">${(currentTrace.total_duration_ms / 1000).toFixed(2)} seconds</div>
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
+
+            const eventsHTML = currentTrace.events.map(event => {
+                const eventClass = getEventClass(event.event_type);
+                const eventContent = formatEventContent(event);
+
+                return `
+                    <div class="event-card ${eventClass}">
+                        <div class="event-header">
+                            <div class="event-type">${event.event_type}</div>
+                            <div class="event-timestamp">
+                                ${new Date(event.timestamp).toLocaleTimeString()}
+                                (+${event.elapsed_ms.toFixed(0)}ms)
+                            </div>
+                        </div>
+                        <div class="event-content">${eventContent}</div>
+                        ${formatEventData(event)}
+                    </div>
+                `;
+            }).join('');
+
+            container.innerHTML = headerHTML + eventsHTML;
+        }
+
+        // Render graph view
+        function renderGraphView() {
+            const container = document.getElementById('graph-view');
+
+            const legendHTML = `
+                <div class="graph-legend">
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: var(--accent-green);"></div>
+                        <span>Tool Call (Success)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: var(--accent-red);"></div>
+                        <span>Tool Call (Failed)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: var(--accent-blue);"></div>
+                        <span>Content</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: var(--accent-purple);"></div>
+                        <span>Reasoning</span>
+                    </div>
+                </div>
+            `;
+
+            container.innerHTML = legendHTML + '<canvas id="graph-canvas"></canvas>';
+            drawGanttChart();
+        }
+
+        // Draw Gantt chart
+        function drawGanttChart() {
+            const canvas = document.getElementById('graph-canvas');
+            if (!canvas) return;
+
+            const ctx = canvas.getContext('2d');
+            const dpr = window.devicePixelRatio || 1;
+
+            // Set canvas size
+            const width = canvas.offsetWidth;
+            const height = Math.max(500, currentTrace.events.length * 40);
+            canvas.width = width * dpr;
+            canvas.height = height * dpr;
+            canvas.style.width = width + 'px';
+            canvas.style.height = height + 'px';
+            ctx.scale(dpr, dpr);
+
+            // Configuration
+            const padding = 40;
+            const rowHeight = 35;
+            const chartWidth = width - padding * 2;
+            const maxTime = Math.max(...currentTrace.events.map(e => e.elapsed_ms));
+            const scale = chartWidth / maxTime;
+
+            // Draw events
+            currentTrace.events.forEach((event, index) => {
+                const y = padding + index * rowHeight;
+                const x = padding + event.elapsed_ms * scale;
+
+                // Determine color and width
+                let color, barWidth;
+                if (event.event_type.includes('tool_call')) {
+                    const duration = event.data.duration_ms || 10;
+                    barWidth = duration * scale;
+                    color = event.data.success === false ? '#f85149' : '#3fb950';
+                } else {
+                    barWidth = 5;
+                    color = event.event_type.includes('reasoning') ? '#bc8cff' : '#58a6ff';
+                }
+
+                // Draw bar
+                ctx.fillStyle = color;
+                ctx.fillRect(x, y, Math.max(barWidth, 3), 20);
+
+                // Draw label
+                ctx.fillStyle = '#e6edf3';
+                ctx.font = '11px monospace';
+                ctx.fillText(event.event_type, padding, y + 15);
+            });
+
+            // Draw timeline axis
+            ctx.strokeStyle = '#3a4149';
+            ctx.beginPath();
+            ctx.moveTo(padding, padding - 10);
+            ctx.lineTo(padding, height - padding);
+            ctx.stroke();
+        }
+
+        // Render raw JSON view
+        function renderRawView() {
+            const container = document.getElementById('raw-view');
+
+            const toolbarHTML = `
+                <div class="json-toolbar">
+                    <button class="json-button" onclick="copyJSON()">Copy JSON</button>
+                    <button class="json-button" onclick="downloadJSON()">Download JSON</button>
+                </div>
+            `;
+
+            const jsonHTML = syntaxHighlightJSON(currentTrace);
+
+            container.innerHTML = toolbarHTML + `<div class="json-container">${jsonHTML}</div>`;
+        }
+
+        // Copy JSON to clipboard
+        function copyJSON() {
+            const json = JSON.stringify(currentTrace, null, 2);
+            navigator.clipboard.writeText(json).then(() => {
+                alert('JSON copied to clipboard!');
+            });
+        }
+
+        // Download JSON file
+        function downloadJSON() {
+            const json = JSON.stringify(currentTrace, null, 2);
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `trace-${currentTrace.session_id}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // Syntax highlight JSON
+        function syntaxHighlightJSON(obj) {
+            let json = JSON.stringify(obj, null, 2);
+            json = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+            return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
+                let cls = 'json-number';
+                if (/^"/.test(match)) {
+                    if (/:$/.test(match)) {
+                        cls = 'json-key';
+                    } else {
+                        cls = 'json-string';
+                    }
+                } else if (/true|false/.test(match)) {
+                    cls = 'json-boolean';
+                } else if (/null/.test(match)) {
+                    cls = 'json-null';
+                }
+                return '<span class="' + cls + '">' + match + '</span>';
+            });
+        }
+
+        // Helper functions
+        function getEventClass(eventType) {
+            if (eventType.includes('user')) return 'user';
+            if (eventType.includes('assistant')) return 'assistant';
+            if (eventType.includes('tool')) return 'tool';
+            if (eventType.includes('reasoning')) return 'reasoning';
+            if (eventType.includes('error')) return 'error';
+            return '';
+        }
+
+        function formatEventContent(event) {
+            if (event.data.content) {
+                return escapeHtml(event.data.content);
+            }
+            if (event.data.tool_name) {
+                return `<strong>${event.data.tool_name}</strong>`;
+            }
+            if (event.data.message) {
+                return escapeHtml(event.data.message);
+            }
+            return '';
+        }
+
+        function formatEventData(event) {
+            const data = {...event.data};
+            delete data.content;
+
+            if (Object.keys(data).length === 0) return '';
+
+            return `<div class="event-data">${escapeHtml(JSON.stringify(data, null, 2))}</div>`;
+        }
+
+        function formatRelativeTime(date) {
+            const seconds = Math.floor((new Date() - date) / 1000);
+            if (seconds < 60) return 'just now';
+            if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+            if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+            return `${Math.floor(seconds / 86400)}d ago`;
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / 1048576).toFixed(1) + ' MB';
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function showLoading() {
+            ['timeline-view', 'graph-view', 'raw-view'].forEach(id => {
+                const view = document.getElementById(id);
+                if (view.classList.contains('active')) {
+                    view.innerHTML = '<div class="loading">Loading trace data...</div>';
+                }
+            });
+        }
+
+        function showError(message) {
+            ['timeline-view', 'graph-view', 'raw-view'].forEach(id => {
+                const view = document.getElementById(id);
+                if (view.classList.contains('active')) {
+                    view.innerHTML = `
+                        <div class="empty-state">
+                            <div class="empty-state-icon">⚠️</div>
+                            <p>${message}</p>
+                        </div>
+                    `;
+                }
+            });
+        }
+
+        // Setup event listeners
+        function setupEventListeners() {
+            // View tab switching
+            document.querySelectorAll('.view-tab').forEach(tab => {
+                tab.addEventListener('click', () => {
+                    const view = tab.dataset.view;
+                    switchView(view);
+                });
+            });
+        }
+
+        // Switch view
+        function switchView(view) {
+            currentView = view;
+
+            // Update tabs
+            document.querySelectorAll('.view-tab').forEach(tab => {
+                tab.classList.toggle('active', tab.dataset.view === view);
+            });
+
+            // Update containers
+            document.querySelectorAll('.view-container').forEach(container => {
+                container.classList.toggle('active', container.id === `${view}-view`);
+            });
+
+            // Render if trace is loaded
+            if (currentTrace) {
+                renderTrace();
+            }
+        }
+
+        // Initialize on load
+        init();
+    </script>
+</body>
+</html>

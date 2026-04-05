@@ -1,0 +1,174 @@
+---
+title: Installation
+description: Install Appam for production-grade Rust agents with high-throughput execution, tracing, and persistent sessions.
+---
+
+Appam is designed for real agent systems, not just toy chat loops. The same installation path supports concurrent execution, trace emission, session persistence, continuation handling, and provider-specific reliability controls.
+
+## Add Appam to Your Project
+
+The fastest way to add Appam is with `cargo add`:
+
+```bash
+cargo add appam
+```
+
+Or add it manually to your `Cargo.toml`:
+
+```toml
+[dependencies]
+appam = "0.1"
+```
+
+### Required Dependencies
+
+Appam uses [Tokio](https://tokio.rs) as its async runtime. You need Tokio with the `macros` and `rt-multi-thread` features enabled:
+
+```toml
+[dependencies]
+appam = "0.1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+```
+
+If you plan to define tool input types with `serde`, add it as well:
+
+```toml
+serde = { version = "1.0", features = ["derive"] }
+```
+
+### Feature Flags
+
+Appam ships with sensible defaults. The only optional feature flag is `python`, which enables Python-based tool implementations via PyO3:
+
+```toml
+appam = { version = "0.1", features = ["python"] }
+```
+
+Most users do not need this -- tools written in pure Rust are the recommended path.
+
+If you are targeting long-running production jobs, the default library already includes the core pieces you need for:
+
+- high-throughput async execution
+- built-in tracing and streaming events
+- SQLite-backed session persistence
+- retry and continuation mechanics
+- provider-specific caching and routing controls
+
+## Configure Provider Credentials
+
+Appam supports multiple LLM providers. Set the appropriate environment variable for the provider you want to use.
+
+### Anthropic
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+```
+
+### OpenAI
+
+```bash
+export OPENAI_API_KEY="sk-..."
+```
+
+### OpenAI Codex
+
+Codex subscription access can come from an explicit token or from Appam's local
+auth cache:
+
+```bash
+export OPENAI_CODEX_MODEL="gpt-5.4"                    # optional
+export OPENAI_CODEX_ACCESS_TOKEN="eyJ..."              # optional explicit token
+export OPENAI_CODEX_AUTH_FILE="$HOME/.appam/auth.json" # optional auth cache override
+```
+
+### OpenRouter
+
+```bash
+export OPENROUTER_API_KEY="sk-or-v1-..."
+```
+
+### Google Vertex AI
+
+Vertex supports API key authentication or OAuth bearer tokens. Set one of the following:
+
+```bash
+# API key (any of these will work, checked in this order)
+export GOOGLE_VERTEX_API_KEY="..."
+export GOOGLE_API_KEY="..."
+export GEMINI_API_KEY="..."
+
+# Or use an OAuth bearer token
+export GOOGLE_VERTEX_ACCESS_TOKEN="ya29...."
+```
+
+### Azure OpenAI
+
+Azure requires an API key, a resource name, and an API version:
+
+```bash
+export AZURE_OPENAI_API_KEY="..."
+export AZURE_OPENAI_RESOURCE="your-resource-name"
+export AZURE_OPENAI_API_VERSION="2025-04-01-preview"  # optional, this is the default
+```
+
+### Azure Anthropic
+
+Azure Anthropic requires either a full Azure-hosted Anthropic base URL or a
+resource name that Appam can expand into the documented `services.ai.azure.com`
+endpoint shape:
+
+```bash
+export AZURE_API_KEY="..."  # or AZURE_ANTHROPIC_API_KEY
+export AZURE_ANTHROPIC_BASE_URL="https://your-resource.services.ai.azure.com/anthropic"
+# or export AZURE_ANTHROPIC_RESOURCE="your-resource"
+export AZURE_ANTHROPIC_AUTH_METHOD="x_api_key"  # optional, defaults to x_api_key
+```
+
+### AWS Bedrock
+
+Bedrock uses standard AWS credentials for SigV4 request signing:
+
+```bash
+export AWS_ACCESS_KEY_ID="AKIA..."
+export AWS_SECRET_ACCESS_KEY="..."
+export AWS_REGION="us-east-1"
+
+# Optionally specify the Bedrock model ID
+export AWS_BEDROCK_MODEL_ID="us.anthropic.claude-sonnet-4-5-20250514-v1:0"
+```
+
+Bedrock also supports bearer-token authentication via `AWS_BEARER_TOKEN_BEDROCK`, though this mode does not support streaming.
+
+## Verify Installation
+
+Create a minimal `src/main.rs` to confirm the crate compiles and a provider call works end-to-end:
+
+```rust
+use appam::prelude::*;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let agent = Agent::quick(
+        "anthropic/claude-sonnet-4-5",
+        "You are a helpful assistant.",
+        vec![],
+    )?;
+
+    agent
+        .stream("Reply with the word ready.")
+        .on_content(|text| print!("{}", text))
+        .run()
+        .await?;
+
+    println!();
+    Ok(())
+}
+```
+
+Run it:
+
+```bash
+cargo run
+```
+
+If the program streams a reply without errors, both the crate setup and your provider credentials are working. If you only want a compile-time smoke test, stopping after `Agent::quick(...)` verifies the local Rust setup but does not validate authentication. Head to the [Quickstart](/docs/getting-started/quickstart) for a slightly more complete first run.

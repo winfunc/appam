@@ -1,0 +1,86 @@
+---
+title: Coding Agent (AWS Bedrock)
+description: A readline-based coding agent that runs Claude through Bedrock with configurable authentication and Anthropic features.
+---
+
+`examples/coding-agent-bedrock.rs` documents the Bedrock-specific provider variant in Appam. The sample supports both SigV4 and bearer-token authentication, then applies Anthropic controls such as adaptive thinking, effort, and retries on top of the Bedrock transport.
+
+## Run with SigV4
+
+```bash
+export AWS_ACCESS_KEY_ID="your-access-key"
+export AWS_SECRET_ACCESS_KEY="your-secret-key"
+export AWS_SESSION_TOKEN="your-session-token" # optional
+export AWS_REGION="us-east-1"                 # optional
+export AWS_BEDROCK_MODEL_ID="us.anthropic.claude-opus-4-6-v1" # optional
+
+cargo run --example coding-agent-bedrock
+```
+
+## Run with bearer-token auth
+
+```bash
+export AWS_BEARER_TOKEN_BEDROCK="your-token"
+export AWS_BEDROCK_AUTH_METHOD="bearer_token"
+export AWS_REGION="us-east-1"
+
+cargo run --example coding-agent-bedrock
+```
+
+## What this example actually configures
+
+- `LlmProvider::Bedrock { region, model_id, auth_method }`
+- `ThinkingConfig::adaptive()` for the default Opus 4.6 Bedrock model
+- Anthropic `EffortLevel::Max`
+- Prompt caching is supported by Appam for compatible Bedrock Claude models, but this example leaves it off because AWS support is model-specific and the default Opus 4.6 example model is not documented on the current Bedrock prompt-caching support table.
+- Anthropic beta features for `context_1m` and `effort`
+- Anthropic retry configuration
+- The shared coding tools: `read_file`, `write_file`, `bash`, and `list_files`
+
+## Key builder setup
+
+```rust
+let agent = AgentBuilder::new("claude-bedrock")
+    .provider(LlmProvider::Bedrock {
+        region: region.clone(),
+        model_id: model_id.clone(),
+        auth_method: bedrock_auth,
+    })
+    .model(&model_id)
+    .system_prompt(
+        "You are an advanced coding assistant powered by Claude Opus 4.6 via AWS Bedrock. \
+         You have access to file operations, bash commands, and directory listing. \
+         Use your adaptive thinking capabilities to reason through complex problems. \
+         Always explain your reasoning process and provide detailed analysis.",
+    )
+    .thinking(appam::llm::anthropic::ThinkingConfig::adaptive())
+    .effort(appam::llm::anthropic::EffortLevel::Max)
+    .beta_features(appam::llm::anthropic::BetaFeatures {
+        context_1m: true,
+        effort: true,
+        ..Default::default()
+    })
+    .tool_choice(appam::llm::anthropic::ToolChoiceConfig::Auto {
+        disable_parallel_tool_use: false,
+    })
+    .retry(appam::llm::anthropic::RetryConfig {
+        max_retries: 5,
+        initial_backoff_ms: 2000,
+        max_backoff_ms: 60000,
+        backoff_multiplier: 2.0,
+        jitter: true,
+    })
+    .with_tool(Arc::new(read_file()))
+    .with_tool(Arc::new(write_file()))
+    .with_tool(Arc::new(bash()))
+    .with_tool(Arc::new(list_files()))
+    .max_tokens(20000)
+    .build()?;
+```
+
+## Runtime behavior
+
+- SigV4 is the default and the example labels it as the streaming-capable path.
+- Setting `AWS_BEDROCK_AUTH_METHOD=bearer_token` switches to `BedrockAuthMethod::BearerToken`.
+- If you switch to a Bedrock Claude model that supports prompt caching, you can enable `.caching(...)` and Appam will emit Bedrock-compatible Anthropic cache checkpoints.
+- The terminal UI prints reasoning, tool calls, and tool results as the stream progresses.

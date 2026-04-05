@@ -1,0 +1,1461 @@
+@import "tailwindcss";
+@import "fumadocs-ui/css/neutral.css";
+@import "fumadocs-ui/css/preset.css";
+
+/* ═══════════════════════════════════════════════════
+   APPAM — Design System
+   Warm amber palette on parchment surfaces.
+   Premium documentation for a production Rust framework.
+   ═══════════════════════════════════════════════════ */
+
+/* ─── COLOR SYSTEM — LIGHT ──────────────────────── */
+
+:root {
+  --font-sans: var(--font-appam-sans);
+  --font-mono: var(--font-appam-mono);
+
+  /* Surfaces */
+  --appam-bg: #faf7f2;
+  --appam-surface: #ffffff;
+  --appam-surface-raised: rgba(255, 255, 255, 0.92);
+
+  /* Borders */
+  --appam-border: rgba(160, 130, 80, 0.12);
+  --appam-border-strong: rgba(160, 130, 80, 0.22);
+
+  /* Amber-tinted shadows */
+  --appam-shadow-sm: 0 1px 2px rgba(140, 110, 60, 0.05);
+  --appam-shadow: 0 4px 12px -4px rgba(140, 110, 60, 0.08);
+  --appam-shadow-lg: 0 12px 32px -8px rgba(140, 110, 60, 0.12);
+  --appam-shadow-xl: 0 24px 56px -16px rgba(120, 90, 40, 0.16);
+
+  /* Text */
+  --appam-ink: #1a1610;
+  --appam-muted: #7a6e5e;
+
+  /* Accent */
+  --appam-accent: #b87a14;
+  --appam-accent-hover: #a06a0e;
+  --appam-accent-soft: rgba(184, 122, 20, 0.07);
+
+  /* Code */
+  --appam-code-bg: #0c0b09;
+  --appam-code-fg: #f0ead8;
+
+  /* ─ Fumadocs overrides ─ */
+  --color-fd-background: #faf7f2;
+  --color-fd-foreground: #1a1610;
+  --color-fd-muted: #f0ead8;
+  --color-fd-muted-foreground: #7a6e5e;
+  --color-fd-popover: #ffffff;
+  --color-fd-popover-foreground: #1a1610;
+  --color-fd-card: rgba(255, 255, 255, 0.92);
+  --color-fd-card-foreground: #1a1610;
+  --color-fd-border: rgba(160, 130, 80, 0.12);
+  --color-fd-primary: #b87a14;
+  --color-fd-primary-foreground: #fffdf8;
+  --color-fd-secondary: #f0ead8;
+  --color-fd-secondary-foreground: #1a1610;
+  --color-fd-accent: rgba(184, 122, 20, 0.08);
+  --color-fd-accent-foreground: #8b5e14;
+  --color-fd-ring: #b87a14;
+}
+
+/* ─── COLOR SYSTEM — DARK ───────────────────────── */
+
+.dark {
+  --appam-bg: #0c0b09;
+  --appam-surface: #161412;
+  --appam-surface-raised: rgba(22, 20, 18, 0.92);
+
+  --appam-border: rgba(200, 160, 80, 0.08);
+  --appam-border-strong: rgba(200, 160, 80, 0.16);
+
+  --appam-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.16);
+  --appam-shadow: 0 4px 12px -4px rgba(0, 0, 0, 0.28);
+  --appam-shadow-lg: 0 12px 32px -8px rgba(0, 0, 0, 0.4);
+  --appam-shadow-xl: 0 24px 56px -16px rgba(0, 0, 0, 0.5);
+
+  --appam-ink: #f0ead8;
+  --appam-muted: #8e8474;
+
+  --appam-accent: #e0a040;
+  --appam-accent-hover: #ecb050;
+  --appam-accent-soft: rgba(224, 160, 64, 0.08);
+
+  --appam-code-bg: #080706;
+  --appam-code-fg: #f0ead8;
+
+  --color-fd-background: #0c0b09;
+  --color-fd-foreground: #f0ead8;
+  --color-fd-muted: #1c1a18;
+  --color-fd-muted-foreground: #8e8474;
+  --color-fd-popover: #161412;
+  --color-fd-popover-foreground: #f0ead8;
+  --color-fd-card: rgba(22, 20, 18, 0.92);
+  --color-fd-card-foreground: #f0ead8;
+  --color-fd-border: rgba(200, 160, 80, 0.08);
+  --color-fd-primary: #e0a040;
+  --color-fd-primary-foreground: #0c0b09;
+  --color-fd-secondary: #1c1a18;
+  --color-fd-secondary-foreground: #f0ead8;
+  --color-fd-accent: rgba(224, 160, 64, 0.10);
+  --color-fd-accent-foreground: #f0d090;
+  --color-fd-ring: #e0a040;
+}
+
+/* ═══════════════════════════════════════════════════
+   BASE
+   ═══════════════════════════════════════════════════ */
+
+html {
+  background: var(--appam-bg);
+  scroll-behavior: smooth;
+}
+
+body {
+  min-height: 100dvh;
+  background: var(--appam-bg);
+  color: var(--appam-ink);
+  font-family: var(--font-appam-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Subtle grid pattern — fades from top */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -2;
+  background-image:
+    linear-gradient(rgba(0, 0, 0, 0.016) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.016) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(ellipse 80% 50% at 50% 0%, black 10%, transparent 60%);
+}
+
+.dark body::before {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.012) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.012) 1px, transparent 1px);
+}
+
+/* Ambient top glow */
+body::after {
+  content: "";
+  position: fixed;
+  top: -30%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 140%;
+  height: 60%;
+  pointer-events: none;
+  z-index: -1;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(184, 122, 20, 0.04),
+    transparent 55%
+  );
+}
+
+.dark body::after {
+  background: radial-gradient(
+    ellipse at center,
+    rgba(224, 160, 64, 0.025),
+    transparent 55%
+  );
+}
+
+/* ─── Custom scrollbar ──────────────────────────── */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(160, 130, 80, 0.18);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(160, 130, 80, 0.32);
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(200, 160, 80, 0.12);
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(200, 160, 80, 0.24);
+}
+
+/* ═══════════════════════════════════════════════════
+   TYPOGRAPHY
+   ═══════════════════════════════════════════════════ */
+
+.appam-body code,
+.appam-body pre,
+.appam-body kbd,
+.appam-body samp {
+  font-family: var(--font-appam-mono), ui-monospace, monospace;
+}
+
+/* ═══════════════════════════════════════════════════
+   WORDMARK (sidebar header)
+   ═══════════════════════════════════════════════════ */
+
+.appam-wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.appam-wordmark-logo {
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 0.4rem;
+  object-fit: contain;
+  transition: transform 300ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.appam-wordmark:hover .appam-wordmark-logo {
+  transform: rotate(-6deg) scale(1.08);
+}
+
+.appam-wordmark-name {
+  font-size: 0.95rem;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  color: var(--appam-ink);
+}
+
+/* ═══════════════════════════════════════════════════
+   HERO — Layout
+   ═══════════════════════════════════════════════════ */
+
+.appam-hero {
+  display: grid;
+  gap: 2.5rem;
+  padding-bottom: 2rem;
+}
+
+@media (min-width: 768px) {
+  .appam-hero {
+    grid-template-columns: 1fr auto;
+    gap: 2.75rem;
+  }
+
+  .appam-hero-content {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .appam-hero-visual {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .appam-hero-code,
+  .appam-hero-cards {
+    grid-column: 1 / -1;
+  }
+}
+
+/* ═══════════════════════════════════════════════════
+   HERO — Badge
+   ═══════════════════════════════════════════════════ */
+
+.appam-hero-badge {
+  display: inline-block;
+  padding: 0.28rem 0.7rem;
+  border-radius: 999px;
+  background: var(--appam-accent-soft);
+  border: 1px solid var(--appam-border);
+  color: var(--appam-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  animation: appam-rise 600ms cubic-bezier(0.25, 1, 0.5, 1) both;
+}
+
+.appam-hero-badge-link {
+  color: var(--appam-accent);
+  font-weight: 800;
+  text-decoration: none;
+  transition: color 200ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.appam-hero-badge-link:hover {
+  color: var(--appam-accent-hover);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ═══════════════════════════════════════════════════
+   HERO — Heading
+   ═══════════════════════════════════════════════════ */
+
+.appam-hero-content {
+  max-width: 680px;
+}
+
+.appam-hero-heading {
+  margin-top: 1.35rem;
+  font-family: var(--font-appam-display), Georgia, serif;
+  font-size: clamp(2.5rem, 5.8vw, 4.4rem);
+  font-weight: 400;
+  line-height: 1.04;
+  letter-spacing: -0.025em;
+  color: var(--appam-ink);
+  text-wrap: balance;
+  animation: appam-rise 600ms cubic-bezier(0.25, 1, 0.5, 1) 60ms both;
+}
+
+.appam-hero-rust {
+  color: var(--appam-accent);
+}
+
+/* ═══════════════════════════════════════════════════
+   HERO — Description
+   ═══════════════════════════════════════════════════ */
+
+.appam-hero-description {
+  margin-top: 1.3rem;
+  max-width: 46ch;
+  color: var(--appam-muted);
+  font-size: 1.06rem;
+  line-height: 1.65;
+  animation: appam-rise 600ms cubic-bezier(0.25, 1, 0.5, 1) 120ms both;
+}
+
+/* ═══════════════════════════════════════════════════
+   HERO — Capabilities row
+   ═══════════════════════════════════════════════════ */
+
+.appam-hero-caps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 1.4rem;
+  animation: appam-rise 600ms cubic-bezier(0.25, 1, 0.5, 1) 160ms both;
+}
+
+.appam-hero-cap {
+  padding: 0.22rem 0.6rem;
+  border-radius: 0.35rem;
+  border: 1px solid var(--appam-border);
+  background: var(--appam-accent-soft);
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--appam-muted);
+  letter-spacing: 0.02em;
+  transition: border-color 250ms cubic-bezier(0.25, 1, 0.5, 1),
+              color 250ms cubic-bezier(0.25, 1, 0.5, 1);
+  user-select: none;
+}
+
+.appam-hero-cap:hover {
+  border-color: var(--appam-border-strong);
+  color: var(--appam-ink);
+}
+
+/* ═══════════════════════════════════════════════════
+   HERO — CTA Buttons
+   ═══════════════════════════════════════════════════ */
+
+.appam-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.75rem;
+  animation: appam-rise 600ms cubic-bezier(0.25, 1, 0.5, 1) 200ms both;
+}
+
+.appam-hero-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 2.65rem;
+  padding: 0 1.25rem;
+  border-radius: 0.5rem;
+  font-weight: 700;
+  font-size: 0.86rem;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background 200ms cubic-bezier(0.25, 1, 0.5, 1),
+    border-color 200ms cubic-bezier(0.25, 1, 0.5, 1),
+    transform 200ms cubic-bezier(0.25, 1, 0.5, 1),
+    box-shadow 200ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.appam-hero-cta:active {
+  transform: translateY(1px) scale(0.98);
+}
+
+/* Primary CTA */
+.appam-hero-cta-primary {
+  background: var(--appam-accent);
+  color: #fffdf8;
+  box-shadow:
+    var(--appam-shadow-sm),
+    0 8px 20px -8px rgba(184, 122, 20, 0.24);
+}
+
+.dark .appam-hero-cta-primary {
+  color: #0c0b09;
+  box-shadow:
+    var(--appam-shadow-sm),
+    0 8px 20px -8px rgba(224, 160, 64, 0.2);
+}
+
+.appam-hero-cta-primary:hover {
+  background: var(--appam-accent-hover);
+  transform: translateY(-1px);
+  box-shadow:
+    var(--appam-shadow),
+    0 14px 32px -8px rgba(184, 122, 20, 0.3);
+}
+
+.appam-hero-cta-arrow {
+  display: inline-block;
+  transition: transform 200ms cubic-bezier(0.25, 1, 0.5, 1);
+  font-size: 0.9em;
+}
+
+.appam-hero-cta-primary:hover .appam-hero-cta-arrow {
+  transform: translateX(2px);
+}
+
+/* Secondary CTA */
+.appam-hero-cta-secondary {
+  border: 1px solid var(--appam-border-strong);
+  background: transparent;
+  color: var(--appam-ink);
+}
+
+.appam-hero-cta-secondary:hover {
+  background: var(--appam-accent-soft);
+  border-color: var(--appam-accent);
+  transform: translateY(-1px);
+}
+
+/* ═══════════════════════════════════════════════════
+   HERO — Logo / Visual
+   ═══════════════════════════════════════════════════ */
+
+.appam-hero-visual {
+  display: none;
+}
+
+@media (min-width: 768px) {
+  .appam-hero-visual {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    animation: appam-rise 600ms cubic-bezier(0.25, 1, 0.5, 1) 100ms both;
+  }
+
+  /* Ambient glow behind the logo */
+  .appam-hero-visual::before {
+    content: "";
+    position: absolute;
+    inset: -25%;
+    border-radius: 50%;
+    background: radial-gradient(
+      circle at center,
+      rgba(184, 122, 20, 0.06),
+      transparent 65%
+    );
+    z-index: -1;
+    pointer-events: none;
+  }
+
+  .dark .appam-hero-visual::before {
+    background: radial-gradient(
+      circle at center,
+      rgba(224, 160, 64, 0.04),
+      transparent 65%
+    );
+  }
+
+  .appam-hero-visual img {
+    width: clamp(200px, 20vw, 310px);
+    height: auto;
+    filter: drop-shadow(0 16px 32px rgba(184, 122, 20, 0.12));
+    transition: transform 500ms cubic-bezier(0.25, 1, 0.5, 1);
+  }
+
+  .appam-hero-visual img:hover {
+    transform: scale(1.04) rotate(-2deg);
+  }
+}
+
+/* ═══════════════════════════════════════════════════
+   HERO — Code Preview
+   ═══════════════════════════════════════════════════ */
+
+.appam-hero-code {
+  border-radius: 0.75rem;
+  overflow: hidden;
+  border: 1px solid var(--appam-border);
+  background: var(--appam-code-bg);
+  box-shadow:
+    0 0 0 1px rgba(184, 122, 20, 0.04),
+    var(--appam-shadow-xl);
+  animation: appam-rise 600ms cubic-bezier(0.25, 1, 0.5, 1) 280ms both;
+}
+
+.dark .appam-hero-code {
+  box-shadow:
+    0 0 0 1px rgba(224, 160, 64, 0.06),
+    var(--appam-shadow-xl);
+}
+
+/* macOS-style chrome bar */
+.appam-hero-code-chrome {
+  padding: 0.65rem 0.9rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.appam-hero-code-dots {
+  display: flex;
+  gap: 5px;
+}
+
+.appam-hero-code-dots span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  opacity: 0.65;
+}
+
+.appam-hero-code-dots span:nth-child(1) { background: #ff5f57; }
+.appam-hero-code-dots span:nth-child(2) { background: #febc2e; }
+.appam-hero-code-dots span:nth-child(3) { background: #28c840; }
+
+.appam-hero-code-filename {
+  color: rgba(240, 234, 216, 0.35);
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: var(--font-appam-mono), ui-monospace, monospace;
+  letter-spacing: 0.01em;
+}
+
+/* Code body */
+.appam-hero-code-body {
+  padding: 0.9rem 1.1rem 1.1rem;
+  overflow-x: auto;
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.75;
+}
+
+.appam-code-line {
+  display: block;
+  white-space: pre;
+  color: var(--appam-code-fg);
+}
+
+/* Syntax colors — harmonized with amber palette */
+.appam-code-keyword  { color: #e0a040; }
+.appam-code-entity   { color: #7cb8ff; }
+.appam-code-function { color: #ff9580; }
+.appam-code-string   { color: #6dd4b8; }
+.appam-code-meta     { color: #c0a0f0; }
+
+/* ═══════════════════════════════════════════════════
+   HERO — Navigation Cards
+   ═══════════════════════════════════════════════════ */
+
+.appam-hero-cards {
+  display: grid;
+  gap: 0.6rem;
+  animation: appam-rise 600ms cubic-bezier(0.25, 1, 0.5, 1) 360ms both;
+}
+
+@media (min-width: 640px) {
+  .appam-hero-cards {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.appam-hero-card {
+  display: block;
+  padding: 0.9rem 1rem;
+  border-radius: 0.6rem;
+  border: 1px solid var(--appam-border);
+  background: var(--appam-surface-raised);
+  text-decoration: none;
+  transition:
+    border-color 250ms cubic-bezier(0.25, 1, 0.5, 1),
+    background 250ms cubic-bezier(0.25, 1, 0.5, 1),
+    box-shadow 250ms cubic-bezier(0.25, 1, 0.5, 1),
+    transform 250ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.appam-hero-card:hover {
+  border-color: var(--appam-border-strong);
+  background: var(--appam-surface);
+  box-shadow: var(--appam-shadow-lg);
+  transform: translateY(-2px);
+}
+
+.appam-hero-card h3 {
+  margin: 0;
+  font-size: 0.88rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--appam-ink);
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.appam-hero-card-arrow {
+  display: inline-block;
+  font-size: 0.8em;
+  opacity: 0;
+  transform: translateX(-4px);
+  transition:
+    opacity 200ms cubic-bezier(0.25, 1, 0.5, 1),
+    transform 200ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.appam-hero-card:hover .appam-hero-card-arrow {
+  opacity: 0.5;
+  transform: translateX(0);
+}
+
+.appam-hero-card p {
+  margin: 0.2rem 0 0;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--appam-muted);
+}
+
+/* ═══════════════════════════════════════════════════
+   HERO — Word Ticker
+   ═══════════════════════════════════════════════════ */
+
+.appam-ticker-wrap {
+  display: inline-grid;
+  overflow: clip;
+  vertical-align: baseline;
+  padding-bottom: 0.15em;
+  margin-bottom: -0.15em;
+}
+
+/* All words stack in the same cell — widest reserves the width */
+.appam-ticker-word {
+  grid-area: 1 / 1;
+  color: var(--appam-accent);
+  font-style: italic;
+  will-change: transform, opacity;
+}
+
+.appam-ticker-hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.appam-ticker-in {
+  animation: appam-ticker-slide-in 350ms cubic-bezier(0.25, 1, 0.5, 1) both;
+}
+
+.appam-ticker-out {
+  animation: appam-ticker-slide-out 280ms cubic-bezier(0.7, 0, 0.84, 0) both;
+}
+
+@keyframes appam-ticker-slide-in {
+  from { opacity: 0; transform: translateY(110%); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes appam-ticker-slide-out {
+  from { opacity: 1; transform: translateY(0); }
+  to   { opacity: 0; transform: translateY(-110%); }
+}
+
+/* ═══════════════════════════════════════════════════
+   ANIMATIONS
+   ═══════════════════════════════════════════════════ */
+
+@keyframes appam-rise {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ═══════════════════════════════════════════════════
+   DOCS BODY — Prose overrides
+   ═══════════════════════════════════════════════════ */
+
+.appam-body .prose {
+  font-size: 1.02rem;
+}
+
+.appam-body .prose :is(p, li, td, th) {
+  color: color-mix(in srgb, var(--color-fd-foreground) 90%, transparent);
+}
+
+.appam-body .prose :is(h1, h2, h3, h4) {
+  color: var(--color-fd-foreground);
+  letter-spacing: -0.03em;
+}
+
+.appam-body .prose h2 {
+  font-size: 1.45rem;
+  font-weight: 800;
+}
+
+.appam-body .prose h3 {
+  font-weight: 700;
+}
+
+.appam-body .prose code {
+  color: var(--color-fd-foreground);
+}
+
+.appam-body .prose a {
+  color: var(--appam-accent);
+  text-decoration-color: rgba(184, 122, 20, 0.25);
+  text-underline-offset: 2px;
+  transition:
+    color 200ms cubic-bezier(0.25, 1, 0.5, 1),
+    text-decoration-color 200ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.appam-body .prose a:hover {
+  text-decoration-color: var(--appam-accent);
+}
+
+.appam-body [data-search-full] {
+  background: var(--color-fd-card);
+  color: var(--color-fd-card-foreground);
+}
+
+.appam-body .text-fd-muted-foreground {
+  color: var(--color-fd-muted-foreground);
+}
+
+.appam-body .text-fd-card-foreground,
+.appam-body .text-fd-foreground {
+  color: var(--color-fd-foreground);
+}
+
+/* ─── Home page MDX body (below hero) ──────────── */
+
+.appam-home-body {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.appam-home-body h2 {
+  font-size: clamp(1.25rem, 2vw, 1.7rem);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  margin-top: 1rem;
+}
+
+.appam-home-body p,
+.appam-home-body li {
+  color: var(--appam-muted);
+}
+
+.appam-home-body table {
+  border-radius: 0.6rem;
+  overflow: hidden;
+}
+
+.appam-home-body :is(pre, blockquote, table) {
+  box-shadow: var(--appam-shadow-lg);
+}
+
+/* ═══════════════════════════════════════════════════
+   FUMADOCS — Component overrides
+   ═══════════════════════════════════════════════════ */
+
+/* Sidebar: active item gets amber left border */
+[data-active="true"] > a {
+  border-left: 2px solid var(--appam-accent) !important;
+  padding-left: 0.5rem;
+  color: var(--appam-accent) !important;
+}
+
+/* Sidebar: smooth hover on all items */
+[role="treeitem"] > a {
+  transition:
+    color 180ms cubic-bezier(0.25, 1, 0.5, 1),
+    background 180ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+/* TOC: active heading gets amber indicator */
+nav[aria-label="Table of Contents"] a[data-active="true"] {
+  color: var(--appam-accent) !important;
+  font-weight: 600;
+}
+
+/* Search dialog refinements */
+[data-search] input {
+  font-family: var(--font-appam-sans), system-ui, sans-serif;
+}
+
+/* Breadcrumb refinements */
+nav[aria-label="Breadcrumb"] {
+  font-size: 0.82rem;
+}
+
+nav[aria-label="Breadcrumb"] a {
+  transition: color 180ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+nav[aria-label="Breadcrumb"] a:hover {
+  color: var(--appam-accent);
+}
+
+/* ═══════════════════════════════════════════════════
+   RESPONSIVE
+   ═══════════════════════════════════════════════════ */
+
+@media (max-width: 639px) {
+  .appam-hero {
+    gap: 2rem;
+    padding-bottom: 1rem;
+  }
+
+  .appam-hero-heading {
+    font-size: 2.2rem;
+  }
+
+  .appam-hero-description {
+    font-size: 0.98rem;
+  }
+
+  .appam-hero-caps {
+    gap: 0.35rem;
+  }
+
+  .appam-hero-cap {
+    font-size: 0.65rem;
+    padding: 0.18rem 0.5rem;
+  }
+
+  .appam-hero-code-body {
+    font-size: 0.74rem;
+    padding: 0.7rem 0.9rem 0.9rem;
+  }
+
+  .appam-hero-card {
+    padding: 0.8rem 0.9rem;
+  }
+}
+
+/* ═══════════════════════════════════════════════════
+   LANDING PAGE
+   Standalone landing at "/" — outside docs layout.
+   Uses the same design tokens as the doc theme.
+   ═══════════════════════════════════════════════════ */
+
+.appam-landing {
+  width: 100%;
+  overflow-x: hidden;
+}
+
+/* ─── Hero ──────────────────────────────────────── */
+
+.appam-land-hero {
+  max-width: 1140px;
+  margin: 0 auto;
+  padding: 3rem 1.5rem 0;
+}
+
+.appam-land-hero-grid {
+  display: grid;
+  gap: 2rem;
+  align-items: center;
+  animation: appam-rise 650ms cubic-bezier(0.25, 1, 0.5, 1) both;
+}
+
+@media (min-width: 768px) {
+  .appam-land-hero {
+    padding: 4.5rem 2rem 0;
+  }
+
+  .appam-land-hero-grid {
+    grid-template-columns: 1fr auto;
+    gap: 3rem;
+  }
+}
+
+.appam-land-hero-text {
+  max-width: 620px;
+}
+
+.appam-land-h1 {
+  margin-top: 1.2rem;
+  font-family: var(--font-appam-display), Georgia, serif;
+  font-size: clamp(2.6rem, 6vw, 4.8rem);
+  font-weight: 400;
+  line-height: 1.02;
+  letter-spacing: -0.025em;
+  color: var(--appam-ink);
+  text-wrap: balance;
+}
+
+.appam-land-desc {
+  margin-top: 1.4rem;
+  max-width: 48ch;
+  color: var(--appam-muted);
+  font-size: 1.1rem;
+  line-height: 1.65;
+}
+
+/* ─── Hero Visual ───────────────────────────────── */
+
+.appam-land-hero-visual {
+  display: none;
+}
+
+@media (min-width: 768px) {
+  .appam-land-hero-visual {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+
+  .appam-land-hero-logo-wrap {
+    position: relative;
+  }
+
+  /* Warm ambient glow */
+  .appam-land-hero-logo-wrap::before {
+    content: "";
+    position: absolute;
+    inset: -30%;
+    border-radius: 50%;
+    background: radial-gradient(
+      circle at center,
+      rgba(184, 122, 20, 0.07),
+      transparent 65%
+    );
+    z-index: -1;
+    pointer-events: none;
+    animation: appam-pulse 6s ease-in-out infinite;
+  }
+
+  .dark .appam-land-hero-logo-wrap::before {
+    background: radial-gradient(
+      circle at center,
+      rgba(224, 160, 64, 0.05),
+      transparent 65%
+    );
+  }
+
+  .appam-land-hero-logo {
+    width: clamp(220px, 22vw, 340px);
+    height: auto;
+    filter: drop-shadow(0 20px 40px rgba(184, 122, 20, 0.14));
+    transition: transform 600ms cubic-bezier(0.25, 1, 0.5, 1);
+  }
+
+  .appam-land-hero-logo:hover {
+    transform: scale(1.04) rotate(-2deg);
+  }
+}
+
+@keyframes appam-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.7; transform: scale(1.06); }
+}
+
+/* ─── Install Command ───────────────────────────── */
+
+.appam-land-install-row {
+  margin-top: 1.5rem;
+  animation: appam-rise 600ms cubic-bezier(0.25, 1, 0.5, 1) 160ms both;
+}
+
+.appam-land-install {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.9rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--appam-border-strong);
+  background: var(--appam-code-bg);
+  color: var(--appam-code-fg);
+  font-family: var(--font-appam-mono), ui-monospace, monospace;
+  font-size: 0.86rem;
+  cursor: pointer;
+  transition:
+    border-color 250ms cubic-bezier(0.25, 1, 0.5, 1),
+    box-shadow 250ms cubic-bezier(0.25, 1, 0.5, 1),
+    transform 200ms cubic-bezier(0.25, 1, 0.5, 1);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.appam-land-install:hover {
+  border-color: var(--appam-accent);
+  box-shadow: 0 0 0 3px rgba(184, 122, 20, 0.08);
+}
+
+.appam-land-install:active {
+  transform: scale(0.98);
+}
+
+.appam-land-install-prompt {
+  color: var(--appam-accent);
+  font-weight: 700;
+  opacity: 0.6;
+}
+
+.appam-land-install code {
+  color: var(--appam-code-fg);
+  font-family: inherit;
+}
+
+.appam-land-install-copy {
+  margin-left: auto;
+  padding-left: 0.6rem;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 0.72rem;
+  font-family: var(--font-appam-sans), system-ui, sans-serif;
+  font-weight: 600;
+  color: var(--appam-muted);
+  letter-spacing: 0.02em;
+  transition: color 200ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.appam-land-install:hover .appam-land-install-copy {
+  color: var(--appam-accent);
+}
+
+/* ─── Hero Code Preview ─────────────────────────── */
+
+.appam-land-code {
+  margin-top: 2.5rem;
+}
+
+@media (min-width: 768px) {
+  .appam-land-code {
+    margin-top: 3rem;
+  }
+}
+
+/* ─── Section Shared ────────────────────────────── */
+
+.appam-land-section {
+  max-width: 1140px;
+  margin: 0 auto;
+  padding: 5rem 1.5rem 0;
+}
+
+@media (min-width: 768px) {
+  .appam-land-section {
+    padding: 7rem 2rem 0;
+  }
+}
+
+.appam-land-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--appam-accent);
+  margin-bottom: 0.6rem;
+}
+
+.appam-land-heading {
+  font-family: var(--font-appam-display), Georgia, serif;
+  font-size: clamp(1.6rem, 3.5vw, 2.6rem);
+  font-weight: 400;
+  line-height: 1.12;
+  letter-spacing: -0.025em;
+  color: var(--appam-ink);
+  max-width: 28ch;
+  text-wrap: balance;
+}
+
+.appam-land-subdesc {
+  margin-top: 0.8rem;
+  max-width: 52ch;
+  color: var(--appam-muted);
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+/* ─── Asymmetric Bento Grid ─────────────────────── */
+
+.appam-land-bento {
+  display: grid;
+  gap: 1rem;
+  margin-top: 2.5rem;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 640px) {
+  .appam-land-bento {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 1024px) {
+  .appam-land-bento {
+    grid-template-columns: repeat(12, 1fr);
+    grid-auto-rows: minmax(140px, auto);
+  }
+
+  /* Core layout structure — true asymmetry */
+  .appam-bento--provider { grid-column: span 7; grid-row: span 2; } /* Big hero card left */
+  .appam-bento--tools    { grid-column: span 5; grid-row: span 1; } /* Top right */
+  .appam-bento--stream   { grid-column: span 5; grid-row: span 1; } /* Middle right */
+  .appam-bento--session  { grid-column: span 4; grid-row: span 1; } /* Bottom left */
+  .appam-bento--trace    { grid-column: span 4; grid-row: span 1; } /* Bottom middle */
+  .appam-bento--reliable { grid-column: span 4; grid-row: span 1; } /* Bottom right */
+}
+
+/* Individual Bento Cards */
+.appam-bento-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 1rem;
+  border: 1px solid var(--appam-border);
+  background: var(--appam-surface-raised);
+  padding: 1.8rem;
+  transition:
+    transform 350ms cubic-bezier(0.25, 1, 0.5, 1),
+    border-color 350ms cubic-bezier(0.25, 1, 0.5, 1),
+    box-shadow 350ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.appam-bento-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--appam-border-strong);
+  box-shadow: var(--appam-shadow-lg);
+}
+
+/* Card content layout */
+.appam-bento-body {
+  position: relative;
+  z-index: 10;
+}
+
+.appam-bento-title {
+  font-size: 1.15rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--appam-ink);
+  margin: 0 0 0.5rem 0;
+}
+
+.appam-bento-desc {
+  font-size: 0.95rem;
+  line-height: 1.55;
+  color: var(--appam-muted);
+  margin: 0;
+}
+
+/* SVG Container — flexible based on card size */
+.appam-bento-illust {
+  position: relative;
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 100px;
+  margin-bottom: 1.2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.appam-land-svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+/* Bottom row smaller cards don't need as tall an illust */
+.appam-bento--trace .appam-bento-illust,
+.appam-bento--reliable .appam-bento-illust,
+.appam-bento--session .appam-bento-illust {
+  min-height: 80px;
+}
+
+
+/* ─── Providers ─────────────────────────────────── */
+
+.appam-land-providers {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.6rem;
+  margin-top: 2.5rem;
+}
+
+@media (min-width: 640px) {
+  .appam-land-providers {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+.appam-land-provider {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 1rem 1.1rem;
+  border-radius: 0.55rem;
+  border: 1px solid var(--appam-border);
+  background: var(--appam-surface-raised);
+  transition:
+    border-color 250ms cubic-bezier(0.25, 1, 0.5, 1),
+    box-shadow 250ms cubic-bezier(0.25, 1, 0.5, 1),
+    transform 250ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.appam-land-provider:hover {
+  border-color: var(--appam-border-strong);
+  box-shadow: var(--appam-shadow);
+  transform: translateY(-1px);
+}
+
+.appam-land-provider-name {
+  font-size: 0.9rem;
+  font-weight: 750;
+  letter-spacing: -0.015em;
+  color: var(--appam-ink);
+}
+
+.appam-land-provider-detail {
+  font-size: 0.76rem;
+  color: var(--appam-muted);
+}
+
+/* ─── Graph View ────────────────────────────────── */
+
+.appam-land-graph-wrap {
+  margin-top: 2rem;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  border: 1px solid var(--appam-border);
+  box-shadow: var(--appam-shadow-xl);
+  background: var(--appam-surface);
+}
+
+/* Override inner graph-view height for landing page prominence */
+.appam-land-graph-wrap .relative {
+  height: 520px;
+}
+
+@media (min-width: 768px) {
+  .appam-land-graph-wrap .relative {
+    height: 600px;
+  }
+}
+
+/* Remove inner graph-view border/radius (we provide outer) */
+.appam-land-graph-wrap > div {
+  border: none !important;
+  border-radius: 0 !important;
+}
+
+/* ─── CTA Section ───────────────────────────────── */
+
+.appam-land-cta-section {
+  max-width: 1140px;
+  margin: 0 auto;
+  padding: 6rem 1.5rem 3rem;
+  text-align: center;
+  position: relative;
+}
+
+/* Warm divider line above CTA */
+.appam-land-cta-section::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 80px;
+  height: 2px;
+  background: var(--appam-accent);
+  opacity: 0.3;
+  border-radius: 1px;
+}
+
+@media (min-width: 768px) {
+  .appam-land-cta-section {
+    padding: 8rem 2rem 4rem;
+  }
+}
+
+.appam-land-cta-heading {
+  font-family: var(--font-appam-display), Georgia, serif;
+  font-size: clamp(2rem, 4.5vw, 3.2rem);
+  font-weight: 400;
+  line-height: 1.08;
+  letter-spacing: -0.025em;
+  color: var(--appam-ink);
+}
+
+.appam-land-cta-desc {
+  margin-top: 0.8rem;
+  color: var(--appam-muted);
+  font-size: 1.05rem;
+  line-height: 1.6;
+}
+
+.appam-land-cta-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-top: 2rem;
+}
+
+/* ─── Footer ────────────────────────────────────── */
+
+.appam-land-footer {
+  border-top: 1px solid var(--appam-border);
+  margin-top: 0;
+}
+
+.appam-land-footer-inner {
+  max-width: 1140px;
+  margin: 0 auto;
+  padding: 2.5rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.2rem;
+  align-items: center;
+  text-align: center;
+}
+
+@media (min-width: 768px) {
+  .appam-land-footer-inner {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    text-align: left;
+    padding: 2rem 2rem;
+  }
+}
+
+.appam-land-footer-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.appam-land-footer-logo {
+  width: 1.3rem;
+  height: 1.3rem;
+  border-radius: 0.3rem;
+}
+
+.appam-land-footer-name {
+  font-size: 0.88rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--appam-ink);
+}
+
+.appam-land-footer-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.2rem;
+  justify-content: center;
+}
+
+.appam-land-footer-links a {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--appam-muted);
+  text-decoration: none;
+  transition: color 200ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.appam-land-footer-links a:hover {
+  color: var(--appam-accent);
+}
+
+.appam-land-footer-copy {
+  font-size: 0.76rem;
+  color: var(--appam-muted);
+  margin: 0;
+}
+
+.appam-land-footer-copy a {
+  color: var(--appam-accent);
+  text-decoration: none;
+  font-weight: 600;
+  transition: color 200ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.appam-land-footer-copy a:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ─── Landing Responsive ────────────────────────── */
+
+@media (max-width: 639px) {
+  .appam-land-hero {
+    padding: 2rem 1rem 0;
+  }
+
+  .appam-land-h1 {
+    font-size: 2.3rem;
+  }
+
+  .appam-land-desc {
+    font-size: 1rem;
+  }
+
+  .appam-land-install {
+    font-size: 0.78rem;
+    padding: 0.45rem 0.7rem;
+  }
+
+  .appam-land-section {
+    padding: 3.5rem 1rem 0;
+  }
+
+  .appam-land-cta-section {
+    padding: 4rem 1rem 2rem;
+  }
+
+  .appam-land-footer-inner {
+    padding: 2rem 1rem;
+  }
+}

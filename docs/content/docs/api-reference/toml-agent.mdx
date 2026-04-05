@@ -1,0 +1,238 @@
+---
+title: TomlAgent
+description: Load and run agents defined in TOML configuration files.
+---
+
+`TomlAgent` loads agent configuration, system prompts, and tools entirely from TOML files, enabling zero-code agent creation. It implements the [`Agent`](/docs/api-reference/agent-trait) trait and can be extended with additional Rust tools at runtime.
+
+## Construction
+
+### `TomlAgent::from_file()`
+
+```rust
+pub fn from_file(path: impl AsRef<Path>) -> Result<Self>
+```
+
+Loads an agent from a TOML configuration file. Reads the configuration, validates it, loads the system prompt from the referenced file, and instantiates all tools (Rust and Python).
+
+Paths in the TOML file are resolved relative to the directory containing the TOML file itself.
+
+Returns an error if:
+- The config file cannot be read or parsed
+- The system prompt file is missing
+- Any tool fails to load
+- Configuration validation fails (e.g., duplicate tool names)
+
+```rust
+use appam::prelude::*;
+
+let agent = TomlAgent::from_file("agents/assistant.toml")?;
+agent.run("What can you do?").await?;
+```
+
+## Methods
+
+### `.with_model()`
+
+```rust
+pub fn with_model(self, model: impl Into<String>) -> Self
+```
+
+Overrides the model specified in the TOML file. Consumes and returns `self` for chaining.
+
+```rust
+let agent = TomlAgent::from_file("agent.toml")?
+    .with_model("anthropic/claude-sonnet-4-5");
+```
+
+### `.model()`
+
+```rust
+pub fn model(&self) -> String
+```
+
+Returns the effective model for this agent. Priority:
+
+1. Model override (set via `.with_model()`)
+2. Model from TOML config (`agent.model`)
+3. Default: `"openai/gpt-5"`
+
+### `.with_additional_tool()`
+
+```rust
+pub fn with_additional_tool(self, tool: Arc<dyn Tool>) -> Self
+```
+
+Adds a single Rust tool to the agent's registry. This extends the TOML-configured tools with programmatic tools. Consumes and returns `self` for chaining.
+
+```rust
+let agent = TomlAgent::from_file("agent.toml")?
+    .with_additional_tool(Arc::new(CustomTool));
+```
+
+### `.with_additional_tools()`
+
+```rust
+pub fn with_additional_tools(self, tools: Vec<Arc<dyn Tool>>) -> Self
+```
+
+Adds multiple Rust tools at once.
+
+```rust
+let agent = TomlAgent::from_file("agent.toml")?
+    .with_additional_tools(vec![
+        Arc::new(tool_1),
+        Arc::new(tool_2),
+    ]);
+```
+
+### `.with_system_prompt_override()`
+
+```rust
+pub fn with_system_prompt_override(self, prompt: impl Into<String>) -> Self
+```
+
+Replaces the system prompt loaded from the TOML file. Useful for dynamic prompt generation while keeping tool configuration from the file.
+
+```rust
+let agent = TomlAgent::from_file("agent.toml")?
+    .with_system_prompt_override("You are a specialized assistant for code review.");
+```
+
+### `.base_dir()`
+
+```rust
+pub fn base_dir(&self) -> &Path
+```
+
+Returns the base directory used for resolving relative paths in the TOML configuration.
+
+### `.registry()`
+
+```rust
+pub fn registry(&self) -> Arc<ToolRegistry>
+```
+
+Returns a clone of the Arc-wrapped tool registry.
+
+### `.config()`
+
+```rust
+pub fn config(&self) -> &AgentConfig
+```
+
+Returns a reference to the parsed TOML agent configuration.
+
+## Agent Trait Implementation
+
+`TomlAgent` implements all `Agent` trait methods:
+
+- **`name()`** -- Returns `config.agent.name` from the TOML file.
+- **`system_prompt()`** -- Returns the loaded (or overridden) system prompt.
+- **`available_tools()`** -- Iterates the registry and collects all tool specs.
+- **`execute_tool(name, args)`** -- Delegates to `self.registry.execute(name, args)`.
+- **`run()`, `run_streaming()`, etc.** -- Use the default runtime implementations.
+
+## TOML File Format
+
+The TOML file has two sections: `[agent]` for metadata and `[[tools]]` for tool definitions.
+
+### Agent Section
+
+```toml
+[agent]
+name = "assistant"                    # Required: unique agent identifier
+model = "openai/gpt-5"               # Optional: LLM model
+system_prompt = "prompts/system.txt"  # Required: path to system prompt file
+description = "A helpful assistant"   # Optional: agent description
+version = "1.0.0"                     # Optional: version identifier
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | `String` | Yes | Unique agent identifier |
+| `model` | `String` | No | Model identifier (e.g., `"openai/gpt-5"`) |
+| `system_prompt` | `PathBuf` | Yes | Path to system prompt file (relative to TOML dir) |
+| `description` | `String` | No | Human-readable description |
+| `version` | `String` | No | Version string |
+
+### Tools Section
+
+Tools are defined as an array of `[[tools]]` entries:
+
+```toml
+[[tools]]
+name = "bash"
+schema = "tools/bash.json"
+implementation = { type = "python", script = "tools/bash.py" }
+
+[[tools]]
+name = "read_file"
+schema = "tools/read_file.json"
+implementation = { type = "rust", module = "appam::tools::builtin::read_file" }
+```
+
+Each tool entry has:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | `String` | Yes | Tool name (must match schema name) |
+| `schema` | `String` | Yes | Path to JSON Schema file |
+| `implementation` | Table | Yes | Tool implementation config |
+
+Implementation types:
+
+- `{ type = "python", script = "path/to/script.py" }` -- Python tool (requires `python` feature)
+- `{ type = "rust", module = "module::path" }` -- Rust tool loaded at runtime
+
+### Validation
+
+The configuration is validated during `from_file()`:
+
+- System prompt file must exist
+- Tool names must be unique within the agent
+- All referenced files must be accessible
+
+## Complete Example
+
+**`agents/researcher.toml`:**
+
+```toml
+[agent]
+name = "researcher"
+model = "anthropic/claude-sonnet-4-5"
+system_prompt = "prompts/researcher.txt"
+description = "Research agent with web search and file tools"
+
+[[tools]]
+name = "web_search"
+schema = "tools/web_search.json"
+implementation = { type = "python", script = "tools/web_search.py" }
+
+[[tools]]
+name = "read_file"
+schema = "tools/read_file.json"
+implementation = { type = "python", script = "tools/read_file.py" }
+```
+
+**`main.rs`:**
+
+```rust
+use appam::prelude::*;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let agent = TomlAgent::from_file("agents/researcher.toml")?
+        .with_model("anthropic/claude-opus-4")
+        .with_additional_tool(Arc::new(custom_analysis_tool()));
+
+    let session = agent.run("Research the latest Rust release").await?;
+    println!("Session: {}", session.session_id);
+
+    Ok(())
+}
+```
+
+## Source
+
+Defined in [`src/agent/toml_agent.rs`](https://github.com/winfunc/appam/blob/main/src/agent/toml_agent.rs).

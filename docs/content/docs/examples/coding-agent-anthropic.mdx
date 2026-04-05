@@ -1,0 +1,75 @@
+---
+title: Coding Agent (Anthropic)
+description: A readline-based coding agent that uses Anthropic-specific thinking, caching, beta features, retries, and rate limiting.
+---
+
+`examples/coding-agent-anthropic.rs` is the most feature-rich coding-agent sample in the crate. It wires up the shared file and shell tools, streams content and reasoning to the terminal, and layers in Anthropic-only controls on top of a normal `AgentBuilder`.
+
+## Run
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+cargo run --example coding-agent-anthropic
+```
+
+## What this example actually configures
+
+- `LlmProvider::Anthropic` with model `claude-sonnet-4-5`
+- Extended thinking with `ThinkingConfig::enabled(1024)`
+- Prompt caching with a one-hour TTL
+- Anthropic beta features for fine-grained tool streaming, context management, interleaved thinking, and 1M context
+- Anthropic tool choice, rate limiting, and retry configuration
+- Four local tools: `read_file`, `write_file`, `bash`, and `list_files`
+
+## Key builder setup
+
+```rust
+let agent = AgentBuilder::new("claude-advanced")
+    .provider(LlmProvider::Anthropic)
+    .model("claude-sonnet-4-5")
+    .system_prompt(
+        "You are an advanced coding assistant powered by Claude Sonnet 4.5. \
+         You have access to file operations, bash commands, and directory listing. \
+         Use your extended thinking capabilities to reason through complex problems. \
+         Always explain your reasoning process and provide detailed analysis.",
+    )
+    .thinking(appam::llm::anthropic::ThinkingConfig::enabled(1024))
+    .caching(appam::llm::anthropic::CachingConfig {
+        enabled: true,
+        ttl: appam::llm::anthropic::CacheTTL::OneHour,
+    })
+    .beta_features(appam::llm::anthropic::BetaFeatures {
+        fine_grained_tool_streaming: true,
+        context_management: true,
+        interleaved_thinking: true,
+        context_1m: true,
+        ..Default::default()
+    })
+    .tool_choice(appam::llm::anthropic::ToolChoiceConfig::Auto {
+        disable_parallel_tool_use: false,
+    })
+    .rate_limiter(appam::llm::anthropic::RateLimiterConfig {
+        enabled: true,
+        tokens_per_minute: 1_800_000,
+    })
+    .retry(appam::llm::anthropic::RetryConfig {
+        max_retries: 5,
+        initial_backoff_ms: 2000,
+        max_backoff_ms: 60000,
+        backoff_multiplier: 2.0,
+        jitter: true,
+    })
+    .with_tool(Arc::new(read_file()))
+    .with_tool(Arc::new(write_file()))
+    .with_tool(Arc::new(bash()))
+    .with_tool(Arc::new(list_files()))
+    .max_tokens(20000)
+    .build()?;
+```
+
+## Runtime behavior
+
+- The loop is interactive and exits on `exit`, `quit`, or `bye`.
+- `.stream(input)` prints normal output with `.on_content(...)`.
+- `.on_reasoning(...)` prints a separate "Thinking" section when the provider emits reasoning text.
+- Tool calls and tool results are surfaced as terminal events during the session.

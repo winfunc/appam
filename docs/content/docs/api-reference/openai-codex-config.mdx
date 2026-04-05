@@ -1,0 +1,67 @@
+---
+title: OpenAICodexConfig
+description: Configuration struct for the ChatGPT subscription-backed OpenAI Codex provider.
+---
+
+`OpenAICodexConfig` is the config used by `OpenAICodexClient::new(...)` and stored in [`AppConfig`](/docs/api-reference/app-config) as `openai_codex`.
+
+## Definition
+
+```rust
+pub struct OpenAICodexConfig {
+    pub access_token: Option<String>,
+    pub base_url: String,
+    pub model: String,
+    pub pricing_model: Option<String>,
+    pub max_output_tokens: Option<i32>,
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub stream: bool,
+    pub reasoning: Option<ReasoningConfig>,
+    pub text_verbosity: Option<TextVerbosity>,
+    pub retry: Option<RetryConfig>,
+    pub auth_file: PathBuf,
+    pub originator: String,
+}
+```
+
+## Defaults from the current code
+
+- `base_url = "https://chatgpt.com/backend-api"`
+- `model = "gpt-5.4"`
+- `max_output_tokens = Some(4096)`
+- `stream = true`
+- `retry = Some(RetryConfig::default())`
+- `auth_file = ~/.appam/auth.json`
+- `originator = "pi"`
+
+## Authentication precedence
+
+Runtime authentication is resolved in this order:
+
+1. `OpenAICodexConfig.access_token`
+2. `OPENAI_CODEX_ACCESS_TOKEN`
+3. cached OAuth credentials in `auth_file`
+
+The auth-cache path defaults to `~/.appam/auth.json` and can be overridden with `OPENAI_CODEX_AUTH_FILE`.
+
+## Validation behavior
+
+`validate()` currently enforces:
+
+- `temperature` in `0.0..=2.0`
+- `top_p` in `0.0..=1.0`
+- reasoning summaries are rejected when the resolved effort becomes `none`
+- sampling compatibility is checked against the normalized Codex model and resolved reasoning effort
+
+## Builder hooks
+
+`AgentBuilder` exposes the current Codex-relevant overrides:
+
+```rust
+.openai_codex_access_token(...)
+.openai_reasoning(...)
+.openai_text_verbosity(...)
+```
+
+Shared runtime overrides such as `.model(...)`, `.max_tokens(...)`, `.temperature(...)`, `.top_p(...)`, and `.retry(...)` also flow into the Codex config.

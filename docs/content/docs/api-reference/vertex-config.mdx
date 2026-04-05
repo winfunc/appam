@@ -1,0 +1,174 @@
+---
+title: VertexConfig
+description: Configuration options specific to the Google Vertex AI provider.
+---
+
+`VertexConfig` defines all configurable parameters for the Google Vertex AI Gemini API, including authentication, function-calling modes, thinking configuration, and project-scoped routing.
+
+## Struct Definition
+
+```rust
+pub struct VertexConfig {
+    pub api_key: Option<String>,
+    pub access_token: Option<String>,
+    pub base_url: String,
+    pub model: String,
+    pub project_id: Option<String>,
+    pub location: String,
+    pub stream: bool,
+    pub max_output_tokens: Option<u32>,
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub top_k: Option<u32>,
+    pub function_calling_mode: VertexFunctionCallingMode,
+    pub allowed_function_names: Option<Vec<String>>,
+    pub stream_function_call_arguments: bool,
+    pub thinking: Option<VertexThinkingConfig>,
+    pub retry: Option<VertexRetryConfig>,
+}
+```
+
+## Fields
+
+### `api_key`
+
+Optional API key for key-based authentication. Resolution order: `config.api_key` -> `GOOGLE_VERTEX_API_KEY` -> `GOOGLE_API_KEY` -> `GEMINI_API_KEY`.
+
+### `access_token`
+
+Optional OAuth bearer token for Authorization header. Resolution: `config.access_token` -> `GOOGLE_VERTEX_ACCESS_TOKEN`.
+
+### `base_url`
+
+Base URL for Vertex API requests. Defaults to `https://aiplatform.googleapis.com`.
+
+### `model`
+
+Gemini model identifier. Defaults to `"gemini-2.5-flash"`.
+
+### `project_id`
+
+Google Cloud project ID. When set, project-scoped endpoints are used. Can be set via `GOOGLE_VERTEX_PROJECT`.
+
+### `location`
+
+Vertex AI region for project-scoped endpoints. Defaults to `"us-central1"`. Can be set via `GOOGLE_VERTEX_LOCATION`.
+
+### `stream`
+
+Whether to call the streaming endpoint. Defaults to `true`.
+
+### `max_output_tokens`
+
+Maximum output tokens. Defaults to `4096`.
+
+### `temperature`
+
+Sampling temperature (0.0--2.0). Validated during config validation.
+
+### `top_p`
+
+Nucleus sampling (0.0--1.0). Validated during config validation.
+
+### `top_k`
+
+Top-k sampling parameter.
+
+### `function_calling_mode`
+
+Controls how the model handles function calling:
+
+```rust
+pub enum VertexFunctionCallingMode {
+    Auto,  // Model decides (default)
+    Any,   // Model must produce function calls
+    None,  // Function calling disabled
+}
+```
+
+### `allowed_function_names`
+
+Optional allow-list of function names when using `Any` mode.
+
+### `stream_function_call_arguments`
+
+Whether to stream function call arguments as partial updates. Defaults to `false`.
+
+### `thinking`
+
+Thinking configuration for supported Gemini models:
+
+```rust
+pub struct VertexThinkingConfig {
+    pub thinking_level: Option<String>,  // "LOW", "MEDIUM", "HIGH"
+    pub include_thoughts: Option<bool>,
+}
+```
+
+- `thinking_level` -- Thinking level hint. Typical values: `"LOW"`, `"MEDIUM"`, `"HIGH"`
+- `include_thoughts` -- Whether to include thought content in responses
+
+### `retry`
+
+Retry policy for transient failures. Reuses OpenAI retry semantics for consistent behavior across providers. Default: 3 retries, 1s initial backoff, 60s max backoff.
+
+## Builder Methods
+
+```rust
+use appam::prelude::*;
+
+let agent = AgentBuilder::new("my-agent")
+    .provider(LlmProvider::Vertex)
+    .model("gemini-2.5-flash")
+    .max_tokens(8192)
+    .system_prompt("You are a helpful assistant.")
+    .build()?;
+```
+
+`AgentBuilder` does not expose a dedicated Vertex thinking helper today. Configure
+thinking through `VertexConfig` or `[vertex.thinking]` in TOML instead.
+
+## TOML Configuration
+
+```toml
+provider = "vertex"
+
+[vertex]
+model = "gemini-2.5-flash"
+project_id = "my-gcp-project"
+location = "us-central1"
+max_output_tokens = 8192
+
+[vertex.thinking]
+thinking_level = "HIGH"
+include_thoughts = true
+```
+
+## Environment Variables
+
+```bash
+# API key authentication (checked in order)
+export GOOGLE_VERTEX_API_KEY="..."
+export GOOGLE_API_KEY="..."
+export GEMINI_API_KEY="..."
+
+# Or OAuth bearer token
+export GOOGLE_VERTEX_ACCESS_TOKEN="ya29...."
+
+# Project-scoped routing
+export GOOGLE_VERTEX_PROJECT="my-gcp-project"
+export GOOGLE_VERTEX_LOCATION="us-central1"
+```
+
+## Validation
+
+`VertexConfig::validate()` checks for:
+
+- Empty model name (error)
+- Empty location (error)
+- Temperature outside \[0.0, 2.0\] (error)
+- `top_p` outside \[0.0, 1.0\] (error)
+
+## Source
+
+Defined in [`src/llm/vertex/config.rs`](https://github.com/winfunc/appam/blob/main/src/llm/vertex/config.rs).

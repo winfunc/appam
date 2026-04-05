@@ -1,0 +1,51 @@
+---
+title: Coding Agent (OpenAI)
+description: A readline-based coding agent that uses the OpenAI provider with reasoning enabled.
+---
+
+This page tracks `examples/coding-agent-openai-responses.rs`. The example is a terminal coding assistant built on `LlmProvider::OpenAI`, with streamed output, streamed reasoning text, and the shared local file and shell tools.
+
+## Run
+
+```bash
+export OPENAI_API_KEY="sk-..."
+cargo run --example coding-agent-openai-responses
+```
+
+## What this example actually configures
+
+- `LlmProvider::OpenAI`
+- Model `gpt-5.4`
+- OpenAI reasoning with `ReasoningEffort::High` and `ReasoningSummary::Detailed`
+- `max_tokens(8192)`
+- The shared coding tools: `read_file`, `write_file`, `bash`, and `list_files`
+
+## Key builder setup
+
+```rust
+let agent = AgentBuilder::new("openai-coding-assistant")
+    .provider(LlmProvider::OpenAI)
+    .model("gpt-5.4")
+    .system_prompt(
+        "You are an expert coding assistant powered by GPT-5.4. \
+         You have access to file operations, bash commands, and directory listing. \
+         Help users analyze code, refactor projects, debug issues, and manage files. \
+         Always think through problems step-by-step and use tools when appropriate.",
+    )
+    .openai_reasoning(appam::llm::openai::ReasoningConfig {
+        effort: Some(appam::llm::openai::ReasoningEffort::High),
+        summary: Some(appam::llm::openai::ReasoningSummary::Detailed),
+    })
+    .with_tool(Arc::new(read_file()))
+    .with_tool(Arc::new(write_file()))
+    .with_tool(Arc::new(bash()))
+    .with_tool(Arc::new(list_files()))
+    .max_tokens(8192)
+    .build()?;
+```
+
+## Runtime behavior
+
+- The page slug is `coding-agent-openai`, but the runnable example target is `coding-agent-openai-responses`.
+- `.on_reasoning(...)` prints a separate "Reasoning" section when the provider emits reasoning text.
+- Tool calls and tool results are streamed to the console during each turn.

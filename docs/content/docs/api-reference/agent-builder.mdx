@@ -1,0 +1,143 @@
+---
+title: AgentBuilder
+description: Fluent builder for constructing RuntimeAgent instances with provider, tool, logging, history, and reasoning overrides.
+---
+
+`AgentBuilder` is the main programmatic construction surface for Appam. It accumulates overrides and turns them into a [`RuntimeAgent`](/docs/api-reference/runtime-agent) when you call `build()`.
+
+## Constructor
+
+```rust
+pub fn new(name: impl Into<String>) -> Self
+```
+
+## Core methods
+
+These methods exist on the current builder and all consume `self`:
+
+```rust
+pub fn provider(self, provider: LlmProvider) -> Self
+pub fn model(self, model: impl Into<String>) -> Self
+pub fn system_prompt(self, prompt: impl Into<String>) -> Self
+pub fn system_prompt_file(self, path: impl AsRef<Path>) -> Self
+pub fn with_tool(self, tool: Arc<dyn Tool>) -> Self
+pub fn with_tools(self, tools: Vec<Arc<dyn Tool>>) -> Self
+pub fn with_registry(self, registry: Arc<ToolRegistry>) -> Self
+pub fn build(self) -> Result<RuntimeAgent>
+pub fn build_with_stream(self, message: impl Into<String>) -> Result<StreamBuilder<'static>>
+```
+
+## Provider-specific methods
+
+### Anthropic
+
+```rust
+pub fn anthropic_api_key(self, key: impl Into<String>) -> Self
+pub fn thinking(self, config: anthropic::ThinkingConfig) -> Self
+pub fn caching(self, config: anthropic::CachingConfig) -> Self
+pub fn tool_choice(self, config: anthropic::ToolChoiceConfig) -> Self
+pub fn effort(self, level: anthropic::EffortLevel) -> Self
+pub fn beta_features(self, features: anthropic::BetaFeatures) -> Self
+pub fn retry(self, config: anthropic::RetryConfig) -> Self
+pub fn disable_retry(self) -> Self
+pub fn rate_limiter(self, config: anthropic::RateLimiterConfig) -> Self
+pub fn enable_rate_limiter(self) -> Self
+pub fn anthropic_pricing_model(self, model: impl Into<String>) -> Self
+```
+
+### OpenAI
+
+```rust
+pub fn openai_api_key(self, key: impl Into<String>) -> Self
+pub fn openai_reasoning(self, config: openai::ReasoningConfig) -> Self
+pub fn openai_text_verbosity(self, verbosity: openai::TextVerbosity) -> Self
+pub fn openai_service_tier(self, tier: openai::ServiceTier) -> Self
+pub fn openai_pricing_model(self, model: impl Into<String>) -> Self
+```
+
+### OpenAI Codex
+
+```rust
+pub fn openai_codex_access_token(self, token: impl Into<String>) -> Self
+```
+
+### OpenRouter
+
+```rust
+pub fn openrouter_api_key(self, key: impl Into<String>) -> Self
+pub fn openrouter_reasoning(self, config: openrouter::config::ReasoningConfig) -> Self
+pub fn openrouter_provider_routing(self, config: openrouter::config::ProviderPreferences) -> Self
+pub fn openrouter_transforms(self, transforms: Vec<String>) -> Self
+pub fn openrouter_models(self, models: Vec<String>) -> Self
+```
+
+### Vertex
+
+```rust
+pub fn vertex_api_key(self, key: impl Into<String>) -> Self
+```
+
+## Shared runtime overrides
+
+```rust
+pub fn reasoning(self, config: ReasoningProvider) -> Self
+pub fn max_tokens(self, max_tokens: u32) -> Self
+pub fn temperature(self, temperature: f32) -> Self
+pub fn top_p(self, top_p: f32) -> Self
+pub fn top_k(self, top_k: u32) -> Self
+pub fn stop_sequences(self, sequences: Vec<String>) -> Self
+
+pub fn logs_dir(self, path: impl Into<PathBuf>) -> Self
+pub fn log_level(self, level: impl Into<String>) -> Self
+pub fn log_format(self, format: LogFormat) -> Self
+pub fn enable_traces(self) -> Self
+pub fn disable_traces(self) -> Self
+pub fn trace_format(self, format: TraceFormat) -> Self
+
+pub fn enable_history(self) -> Self
+pub fn disable_history(self) -> Self
+pub fn history_db_path(self, path: impl Into<PathBuf>) -> Self
+pub fn auto_save_sessions(self, auto_save: bool) -> Self
+
+pub fn require_completion_tools(self, tools: Vec<Arc<dyn Tool>>) -> Self
+pub fn max_continuations(self, count: usize) -> Self
+pub fn continuation_message(self, message: impl Into<String>) -> Self
+```
+
+## Builder ergonomics from `src/agent/quick.rs`
+
+`AgentBuilder` also has these convenience helpers:
+
+```rust
+pub fn prompt(self, prompt: impl Into<String>) -> Self
+pub fn tools(self, tools: Vec<Arc<dyn Tool>>) -> Self
+pub fn tool_dyn(self, tool: Arc<dyn Tool>) -> Self
+```
+
+And the `AgentBuilderToolExt` trait adds:
+
+```rust
+fn tool<T: Tool + 'static>(self, tool: T) -> Self;
+```
+
+## Defaults worth knowing
+
+- `new()` starts with no provider or model override.
+- `max_continuations` defaults to `2`.
+- Trace and history settings are only changed if you call the matching builder methods.
+- `build()` reads the prompt file immediately when `system_prompt_file(...)` is used.
+
+## Example
+
+```rust
+use appam::prelude::*;
+use appam::llm::anthropic::ThinkingConfig;
+
+let agent = AgentBuilder::new("research-agent")
+    .provider(LlmProvider::Anthropic)
+    .model("claude-sonnet-4-5")
+    .system_prompt("You are a careful research assistant.")
+    .thinking(ThinkingConfig::enabled(2048))
+    .enable_history()
+    .build()?;
+```

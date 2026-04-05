@@ -1,0 +1,93 @@
+---
+title: OpenRouter Provider
+description: Use either OpenRouter Responses or OpenRouter Chat Completions from the same Appam crate.
+---
+
+## Setup
+
+```bash
+export OPENROUTER_API_KEY="sk-or-v1-..."
+```
+
+## Two API Surfaces
+
+Appam exposes both OpenRouter APIs:
+
+| Mode | Provider enum | How to select it |
+| --- | --- | --- |
+| Responses API | `LlmProvider::OpenRouterResponses` | `Agent::quick("openrouter/...")` or explicit builder |
+| Chat Completions API | `LlmProvider::OpenRouterCompletions` | Explicit builder or `APPAM_PROVIDER=openrouter` |
+
+`Agent::quick()` only auto-detects the Responses form. There is no `openrouter-completions/...` model prefix in the current quick-detection logic.
+
+## Responses API
+
+```rust
+use appam::prelude::*;
+
+let agent = Agent::quick(
+    "openrouter/anthropic/claude-sonnet-4-5",
+    "You are a helpful assistant.",
+    vec![],
+)?;
+```
+
+## Completions API
+
+```rust
+use appam::prelude::*;
+
+let agent = AgentBuilder::new("openrouter-completions")
+    .provider(LlmProvider::OpenRouterCompletions)
+    .model("anthropic/claude-sonnet-4-5")
+    .system_prompt("You are a helpful assistant.")
+    .build()?;
+```
+
+## Provider Routing and Fallback Models
+
+Provider routing and model fallback lists are OpenRouter Completions features in this crate:
+
+```rust
+use appam::prelude::*;
+
+let agent = AgentBuilder::new("routed-agent")
+    .provider(LlmProvider::OpenRouterCompletions)
+    .model("anthropic/claude-sonnet-4-5")
+    .system_prompt("You are a helpful assistant.")
+    .openrouter_provider_routing(ProviderPreferences {
+        order: Some(vec!["Anthropic".into()]),
+        allow_fallbacks: Some(true),
+        ..Default::default()
+    })
+    .openrouter_models(vec![
+        "anthropic/claude-sonnet-4-5".into(),
+        "openai/gpt-4o".into(),
+    ])
+    .build()?;
+```
+
+## Reasoning
+
+`openrouter_reasoning(...)` works for both APIs. The shared config type includes fields that only apply to one API or the other; unsupported fields are simply omitted at serialization time.
+
+```rust
+use appam::prelude::*;
+use appam::llm::openrouter::ReasoningConfig;
+
+let agent = AgentBuilder::new("reasoning-agent")
+    .provider(LlmProvider::OpenRouterResponses)
+    .model("anthropic/claude-sonnet-4-5")
+    .system_prompt("You are a reasoning assistant.")
+    .openrouter_reasoning(ReasoningConfig::high_effort(32_000))
+    .build()?;
+```
+
+## Examples
+
+The crate includes one example for each OpenRouter API:
+
+```bash
+cargo run --example coding-agent-openrouter-responses
+cargo run --example coding-agent-openrouter-completions
+```

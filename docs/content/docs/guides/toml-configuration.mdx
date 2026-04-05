@@ -1,0 +1,142 @@
+---
+title: TOML Configuration
+description: Define agents in TOML and combine them with global config or runtime overrides.
+---
+
+## Agent Files
+
+An agent file contains one `[agent]` section plus optional `[[tools]]` entries:
+
+```toml
+[agent]
+name = "my-assistant"
+model = "openai/gpt-5.4"
+system_prompt = "prompts/assistant.txt"
+description = "A general-purpose assistant"
+version = "1.0.0"
+
+[[tools]]
+name = "search"
+schema = "tools/search.json"
+implementation = { type = "python", script = "tools/search.py" }
+```
+
+Paths are resolved relative to the TOML file's directory.
+
+## Supported Agent Fields
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `name` | Yes | Unique agent name |
+| `model` | No | Optional model override |
+| `system_prompt` | Yes | Path to the prompt file |
+| `description` | No | Human-readable description |
+| `version` | No | Optional version string |
+
+If no model is provided, `TomlAgent::model()` currently falls back to `openai/gpt-5`.
+
+## Tool Entries
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `name` | Yes | Must be unique within the agent |
+| `schema` | Yes | Path to the JSON schema file |
+| `implementation` | Yes | Python script or Rust module |
+
+Supported implementations:
+
+- `{ type = "python", script = "tools/my_tool.py" }`
+- `{ type = "rust", module = "appam::tools::builtin::bash" }`
+
+## Loading and Overriding
+
+```rust
+use appam::prelude::*;
+use std::sync::Arc;
+
+let agent = TomlAgent::from_file("agents/assistant.toml")?
+    .with_model("anthropic/claude-sonnet-4-5")
+    .with_system_prompt_override("You are a specialized assistant.")
+    .with_additional_tool(Arc::new(my_tool()));
+```
+
+`TomlAgent::from_file(...)` reads the config, validates the prompt path, and loads the configured tools into a registry.
+
+## Global appam.toml
+
+Global config covers providers, logging, history, and optional web settings:
+
+```toml
+provider = "anthropic"
+
+[anthropic]
+model = "claude-sonnet-4-5"
+max_tokens = 4096
+
+[openrouter]
+model = "openai/gpt-5"
+max_output_tokens = 9000
+
+[openai]
+model = "gpt-5.4"
+max_output_tokens = 4096
+
+[vertex]
+model = "gemini-2.5-flash"
+location = "us-central1"
+
+[logging]
+level = "info"
+logs_dir = "logs"
+enable_logs = true
+enable_traces = true
+
+[history]
+enabled = true
+db_path = "data/sessions.db"
+auto_save = true
+```
+
+Load it with:
+
+```rust
+use appam::prelude::*;
+use std::path::Path;
+
+let config = load_global_config(Path::new("appam.toml"))?;
+```
+
+## Builders
+
+`AgentConfigBuilder` helps generate agent TOML:
+
+```rust
+use appam::prelude::*;
+
+AgentConfigBuilder::new("my-agent")
+    .model("claude-sonnet-4-5")
+    .system_prompt("prompts/prompt.txt")
+    .description("A helpful assistant")
+    .add_python_tool("search", "tools/search.json", "tools/search.py")
+    .save_to_file("agents/my-agent.toml")?;
+```
+
+`AppConfigBuilder` builds the global config struct in code:
+
+```rust
+let config = AppConfigBuilder::new()
+    .openrouter_api_key("sk-...")
+    .model("openai/gpt-5")
+    .enable_history("data/sessions.db")
+    .build();
+```
+
+## Priority Order
+
+Configuration is resolved in this order:
+
+1. environment variables
+2. global `appam.toml`
+3. struct defaults
+
+Per-agent TOML is separate: it defines the agent's prompt, tools, and optional model override.

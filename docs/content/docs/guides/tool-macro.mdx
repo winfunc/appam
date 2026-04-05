@@ -1,0 +1,77 @@
+---
+title: The #[tool] Macro
+description: Generate Tool implementations from annotated Rust functions.
+---
+
+The `#[tool]` macro generates a `Tool` implementation from a regular Rust function. In the current crate it expects a synchronous function body that returns `Result<T>`.
+
+## Basic Usage
+
+```rust
+use appam::prelude::*;
+
+#[tool(description = "Echoes back the input message")]
+fn echo(message: String) -> Result<String> {
+    Ok(format!("Echo: {}", message))
+}
+```
+
+This generates:
+
+- a struct named `Echo`
+- `Tool::name()`, `Tool::spec()`, and `Tool::execute()` implementations
+- a constructor-style factory function `echo() -> Echo`
+
+## Attributes
+
+| Attribute | Required | Description |
+| --- | --- | --- |
+| `name` | No | Override the tool name |
+| `description` | No | Human-readable description shown to the model |
+
+If `description` is omitted, the macro currently falls back to `"Tool: <name>"`.
+
+## Parameter Descriptions and Defaults
+
+Use `#[arg(...)]` on parameters:
+
+```rust
+#[tool(description = "Search for documents")]
+fn search(
+    #[arg(description = "The search query")] query: String,
+    #[arg(description = "Maximum number of results", default = 10)] max_results: u32,
+) -> Result<String> {
+    Ok(format!("query={query}, max_results={max_results}"))
+}
+```
+
+Parameters with a `default = ...` expression become optional in the generated JSON schema.
+
+## Typed Input Structs
+
+For a single structured input, pair `#[tool]` with `#[derive(Schema, Deserialize)]`:
+
+```rust
+use appam::prelude::*;
+
+#[derive(Deserialize, Schema)]
+struct ReadFileInput {
+    #[description = "Path to the file to read"]
+    path: String,
+}
+
+#[tool(description = "Read the contents of a file from disk")]
+fn read_file(input: ReadFileInput) -> Result<String> {
+    Ok(std::fs::read_to_string(&input.path)?)
+}
+```
+
+## Return Value Shape
+
+`execute()` wraps successful return values as:
+
+```json
+{ "output": ... }
+```
+
+That applies whether your function returns a string, number, or serializable struct.

@@ -1,0 +1,51 @@
+---
+title: SqliteTraceConsumer
+description: Stream consumer that writes structured events into SQLite and keeps an in-memory copy for the session.
+---
+
+`SqliteTraceConsumer` exists in `src/agent/consumers/sqlite_trace.rs` and implements `StreamConsumer`.
+
+## Definition
+
+```rust
+pub struct SqliteTraceConsumer {
+    pool: Arc<SqlitePool>,
+    session_id: String,
+    agent_name: String,
+    model: String,
+    job_type: String,
+    job_version: i64,
+    start_time: Instant,
+    sequence_counter: Arc<Mutex<i64>>,
+    events: Arc<Mutex<Vec<serde_json::Value>>>,
+    pending_event: Arc<tokio::sync::Mutex<Option<PendingEvent>>>,
+}
+```
+
+## Constructor
+
+```rust
+pub fn new(
+    pool: Arc<SqlitePool>,
+    session_id: String,
+    agent_name: String,
+    model: String,
+    job_type: String,
+    job_version: i64,
+) -> Self
+```
+
+## Behavior that matches the current code
+
+- Consecutive `content` and `reasoning` events are accumulated and flushed as a single row when the event type changes or the stream ends.
+- Non-streaming events are written as their own rows.
+- The consumer also stores JSON event objects in memory for later retrieval through `get_events()`.
+- Database writes happen from the consumer's async flush path; this page should not assume a separate background worker API beyond what the current implementation provides.
+
+## Public helper
+
+```rust
+pub fn get_events(&self) -> Vec<serde_json::Value>
+```
+
+This returns the in-memory copy of the events seen so far.

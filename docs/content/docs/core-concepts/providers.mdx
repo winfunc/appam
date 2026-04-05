@@ -1,0 +1,264 @@
+---
+title: Providers
+description: Multi-provider LLM support with a unified streaming API.
+---
+
+## Overview
+
+Appam supports nine provider variants across eight provider families through a unified streaming API. You can switch providers by changing a single configuration value -- the rest of your agent code stays the same.
+
+Two defaults matter:
+
+- `AppConfig::default()` starts with `LlmProvider::OpenRouterCompletions`.
+- `Agent::quick()` falls back to `LlmProvider::OpenRouterResponses` when it cannot infer a provider from the model string.
+
+## LlmProvider Enum
+
+The `LlmProvider` enum determines which backend API to use:
+
+```rust
+pub enum LlmProvider {
+    Anthropic,
+    OpenAI,
+    OpenAICodex,
+    OpenRouterCompletions,
+    OpenRouterResponses,
+    Vertex,
+    AzureOpenAI { resource_name: String, api_version: String },
+    AzureAnthropic { base_url: String, auth_method: AzureAnthropicAuthMethod },
+    Bedrock { region: String, model_id: String, auth_method: BedrockAuthMethod },
+}
+```
+
+### Provider Details
+
+| Variant | API | Key Features |
+|---------|-----|-------------|
+| `Anthropic` | Messages API | Extended thinking, prompt caching, vision, server tools |
+| `OpenAI` | Responses API | Reasoning (o-series), structured outputs, service tiers |
+| `OpenAICodex` | Codex Responses API | ChatGPT OAuth auth, Codex backend transport, reasoning |
+| `OpenRouterCompletions` | Chat Completions API | Provider routing, automatic caching, reasoning tokens |
+| `OpenRouterResponses` | Responses API | Enhanced reasoning with effort levels, structured outputs |
+| `Vertex` | Gemini `generateContent` | Streaming, function calling, thought signatures |
+| `AzureOpenAI` | Responses API (Azure) | Same as OpenAI, Azure-hosted endpoints |
+| `AzureAnthropic` | Messages API (Azure) | Same as Anthropic Claude, Azure-hosted endpoints |
+| `Bedrock` | Messages API (AWS) | Same as Anthropic Claude, SigV4 streaming |
+
+## Unified Streaming Interface
+
+All providers implement the `LlmClient` trait, which exposes a single method:
+
+```rust
+#[async_trait]
+pub trait LlmClient: Send + Sync {
+    async fn chat_with_tools_streaming(
+        &self,
+        messages: &[UnifiedMessage],
+        tools: &[UnifiedTool],
+        on_content: impl FnMut(&str) -> Result<()>,
+        on_tool_calls: impl FnMut(Vec<UnifiedToolCall>) -> Result<()>,
+        on_reasoning: impl FnMut(&str) -> Result<()>,
+        on_tool_calls_partial: impl FnMut(&[UnifiedToolCall]) -> Result<()>,
+        on_content_block_complete: impl FnMut(UnifiedContentBlock) -> Result<()>,
+        on_usage: impl FnMut(UnifiedUsage) -> Result<()>,
+    ) -> Result<()>;
+}
+```
+
+The runtime converts between provider-specific message formats and the unified format automatically. You never interact with `LlmClient` directly -- the `Agent` trait orchestrates everything.
+
+## DynamicLlmClient
+
+`DynamicLlmClient` is an enum-based wrapper that enables runtime provider selection:
+
+```rust
+use appam::prelude::*;
+use appam::llm::provider::DynamicLlmClient;
+
+let config = AppConfig::default();
+let client = DynamicLlmClient::from_config(&config)?;
+// Client uses whichever provider is in config.provider
+```
+
+This is what the agent runtime uses internally. When you call `agent.run()`, the runtime creates a `DynamicLlmClient` from the resolved configuration, routes the request to the correct provider, and handles format conversion transparently.
+
+## Auto-Detection from Model Strings
+
+`Agent::quick()` and `Agent::new()` detect the provider automatically from the model string:
+
+```rust
+use appam::prelude::*;
+
+// Anthropic (prefix: "anthropic/" or "claude-")
+let agent = Agent::quick("anthropic/claude-sonnet-4-5", "prompt", vec![])?;
+
+// OpenAI (prefix: "openai/", "gpt-", "o1-", or "o3-")
+let agent = Agent::quick("openai/gpt-4o", "prompt", vec![])?;
+
+// OpenAI Codex (prefix: "openai-codex/")
+let codex = Agent::quick("openai-codex/gpt-5.4", "prompt", vec![])?;
+
+// Vertex (prefix: "vertex/", "gemini-", or "google/gemini")
+let agent = Agent::quick("vertex/gemini-2.5-flash", "prompt", vec![])?;
+
+// OpenRouter (prefix: "openrouter/")
+let agent = Agent::quick("openrouter/anthropic/claude-sonnet-4-5", "prompt", vec![])?;
+```
+
+Unknown prefixes default to OpenRouter Responses API, which can proxy to most providers.
+
+For Azure and Bedrock, use `AgentBuilder` with explicit provider configuration since they require additional parameters:
+
+```rust
+use appam::prelude::*;
+
+// Azure OpenAI
+let agent = AgentBuilder::new("azure-agent")
+    .provider(LlmProvider::AzureOpenAI {
+        resource_name: "my-resource".to_string(),
+        api_version: "2025-04-01-preview".to_string(),
+    })
+    .model("gpt-4o")
+    .system_prompt("You are helpful.")
+    .build()?;
+
+// Azure Anthropic
+let azure_claude = AgentBuilder::new("azure-anthropic-agent")
+    .provider(LlmProvider::AzureAnthropic {
+        base_url: "https://my-resource.services.ai.azure.com/anthropic".to_string(),
+        auth_method: appam::llm::anthropic::AzureAnthropicAuthMethod::XApiKey,
+    })
+    .model("claude-opus-4-6")
+    .system_prompt("You are helpful.")
+    .build()?;
+
+// AWS Bedrock
+let agent = AgentBuilder::new("bedrock-agent")
+    .provider(LlmProvider::Bedrock {
+        region: "us-east-1".to_string(),
+        model_id: "us.anthropic.claude-sonnet-4-5-20250514-v1:0".to_string(),
+        auth_method: BedrockAuthMethod::SigV4,
+    })
+    .model("claude-sonnet-4-5")
+    .system_prompt("You are helpful.")
+    .build()?;
+```
+
+## Environment Variables
+
+Each provider reads credentials from environment variables:
+
+### Anthropic
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+```
+
+### OpenAI
+
+```bash
+export OPENAI_API_KEY="sk-..."
+```
+
+### OpenAI Codex
+
+```bash
+export OPENAI_CODEX_MODEL="gpt-5.4"                    # optional
+export OPENAI_CODEX_ACCESS_TOKEN="eyJ..."              # optional explicit token
+export OPENAI_CODEX_AUTH_FILE="$HOME/.appam/auth.json" # optional auth cache override
+```
+
+When `OPENAI_CODEX_ACCESS_TOKEN` is unset, the provider refreshes credentials from
+the local auth cache in `OPENAI_CODEX_AUTH_FILE` (default: `~/.appam/auth.json`).
+
+### OpenRouter
+
+```bash
+export OPENROUTER_API_KEY="sk-or-v1-..."
+```
+
+### Google Vertex AI
+
+```bash
+# API key auth
+export GOOGLE_VERTEX_API_KEY="..."
+
+# Or OAuth bearer token
+export GOOGLE_VERTEX_ACCESS_TOKEN="ya29...."
+
+# Optional fallbacks accepted by the Vertex client
+export GOOGLE_API_KEY="..."
+export GEMINI_API_KEY="..."
+```
+
+### Azure OpenAI
+
+```bash
+export AZURE_OPENAI_API_KEY="..."
+export AZURE_OPENAI_RESOURCE="your-resource-name"
+export AZURE_OPENAI_API_VERSION="2025-04-01-preview"  # optional, this is the default
+```
+
+### Azure Anthropic
+
+```bash
+export AZURE_API_KEY="..."  # or AZURE_ANTHROPIC_API_KEY
+export AZURE_ANTHROPIC_BASE_URL="https://your-resource.services.ai.azure.com/anthropic"
+# or export AZURE_ANTHROPIC_RESOURCE="your-resource"
+export AZURE_ANTHROPIC_AUTH_METHOD="x_api_key"  # optional, defaults to x_api_key
+export AZURE_ANTHROPIC_MODEL="claude-opus-4-6" # optional
+```
+
+### AWS Bedrock
+
+```bash
+# SigV4 authentication (default, supports streaming)
+export AWS_ACCESS_KEY_ID="AKIA..."
+export AWS_SECRET_ACCESS_KEY="..."
+export AWS_REGION="us-east-1"
+export AWS_BEDROCK_MODEL_ID="us.anthropic.claude-sonnet-4-5-20250514-v1:0"  # optional
+
+# Or bearer token authentication (non-streaming only)
+export AWS_BEARER_TOKEN_BEDROCK="..."
+```
+
+## Provider Selection in TOML
+
+Set the provider in your `appam.toml` or agent TOML config:
+
+```toml
+provider = "anthropic"
+# Valid values: anthropic, openai, openai-codex, openrouter-completions,
+#               openrouter-responses, vertex, azure-openai, azure-anthropic, bedrock
+
+[anthropic]
+model = "claude-sonnet-4-5"
+max_tokens = 8192
+```
+
+Or override at runtime via environment variable:
+
+```bash
+export APPAM_PROVIDER="openai"
+```
+
+When `APPAM_PROVIDER=azure-openai` is parsed, the runtime reads
+`AZURE_OPENAI_RESOURCE` and `AZURE_OPENAI_API_VERSION` from the environment to
+construct the `AzureOpenAI` variant. When `APPAM_PROVIDER=azure-anthropic`, it
+reads `AZURE_ANTHROPIC_BASE_URL` or derives one from
+`AZURE_ANTHROPIC_RESOURCE`, then applies `AZURE_ANTHROPIC_AUTH_METHOD`. For
+`bedrock`, it similarly reads `AWS_REGION`/`AWS_DEFAULT_REGION` and
+`AWS_BEDROCK_MODEL_ID`.
+
+## Pricing
+
+Appam includes built-in token pricing data for all providers. The `LlmProvider::pricing_key()` method normalizes provider names for pricing lookups:
+
+| Provider | Pricing Key |
+|----------|------------|
+| Anthropic, AzureAnthropic, Bedrock | `"anthropic"` |
+| OpenAI, OpenAICodex, AzureOpenAI | `"openai"` |
+| OpenRouterCompletions, OpenRouterResponses | `"openrouter"` |
+| Vertex | `"vertex"` |
+
+Azure OpenAI and OpenAI Codex use the same pricing key as OpenAI. Azure Anthropic and Bedrock both use Anthropic-compatible pricing keys.

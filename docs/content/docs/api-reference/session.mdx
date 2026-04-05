@@ -1,0 +1,171 @@
+---
+title: Session
+description: The Session struct representing a completed or in-progress agent conversation.
+---
+
+## Overview
+
+`Session` is returned by every agent execution method -- `agent.run()`, `agent.run_streaming()`, `agent.run_with_consumers()`, and `StreamBuilder::run()`. It captures the full conversation history, timing information, and token usage for a single agent interaction.
+
+## Definition
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Session {
+    pub session_id: String,
+    pub agent_name: String,
+    pub model: String,
+    pub messages: Vec<ChatMessage>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub ended_at: Option<DateTime<Utc>>,
+    pub usage: Option<AggregatedUsage>,
+}
+```
+
+## Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `session_id` | `String` | Unique identifier for this session (UUID v4) |
+| `agent_name` | `String` | Name of the agent that produced this session |
+| `model` | `String` | Model identifier used during the run (e.g., `"claude-sonnet-4-5"`) |
+| `messages` | `Vec<ChatMessage>` | Full conversation history including system, user, assistant, and tool messages |
+| `started_at` | `Option<DateTime<Utc>>` | Timestamp when the session began |
+| `ended_at` | `Option<DateTime<Utc>>` | Timestamp when the session completed (`None` if still running) |
+| `usage` | `Option<AggregatedUsage>` | Aggregated token consumption and cost tracking |
+
+## Messages
+
+The `messages` field contains every message exchanged during the agent run, in order:
+
+1. **System message** -- the agent's system prompt
+2. **User message** -- the initial user prompt
+3. **Assistant messages** -- LLM responses (may include reasoning traces)
+4. **Tool call messages** -- assistant requests to invoke tools
+5. **Tool result messages** -- results returned from tool execution
+
+This cycle repeats for multi-turn tool-calling loops until the LLM produces a final response.
+
+## Usage Tracking
+
+The `usage` field, when present, contains an `AggregatedUsage` struct with cumulative statistics across all LLM requests made during the session:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `total_input_tokens` | `u64` | Total input tokens consumed |
+| `total_output_tokens` | `u64` | Total output tokens generated |
+| `total_cache_creation_tokens` | `u64` | Tokens written to prompt cache |
+| `total_cache_read_tokens` | `u64` | Tokens read from prompt cache |
+| `total_reasoning_tokens` | `u64` | Reasoning/thinking tokens (extended thinking models) |
+| `total_cost_usd` | `f64` | Estimated total cost in USD |
+| `request_count` | `u64` | Number of LLM API requests made |
+
+## Basic Usage
+
+```rust
+use appam::prelude::*;
+
+let agent = Agent::quick(
+    "anthropic/claude-sonnet-4-5",
+    "You are a helpful assistant.",
+    vec![],
+)?;
+
+let session = agent.run("What is the capital of France?").await?;
+
+println!("Session ID: {}", session.session_id);
+println!("Model: {}", session.model);
+println!("Messages: {}", session.messages.len());
+
+if let Some(usage) = &session.usage {
+    println!("Input tokens: {}", usage.total_input_tokens);
+    println!("Output tokens: {}", usage.total_output_tokens);
+    println!("Cost: ${:.4}", usage.total_cost_usd);
+    println!("{}", usage.format_display());
+}
+```
+
+## Extracting the Final Response
+
+The last assistant message in `messages` contains the agent's final response:
+
+```rust
+let session = agent.run("Summarize this document").await?;
+
+let final_response = session
+    .messages
+    .iter()
+    .rev()
+    .find(|msg| msg.role == Role::Assistant && msg.content.is_some())
+    .and_then(|msg| msg.content.as_ref());
+
+if let Some(text) = final_response {
+    println!("Agent said: {}", text);
+}
+```
+
+## Continuing a Session
+
+Pass the `session_id` to `continue_session()` for multi-turn conversations. This loads the previous message history from the session database and appends the new exchange:
+
+```rust
+let session = agent.run("Hello!").await?;
+
+let continued = agent
+    .continue_session(&session.session_id, "What did I just say?")
+    .await?;
+
+// continued.messages contains the full history from both turns
+println!("Total messages: {}", continued.messages.len());
+```
+
+Session continuation requires [SessionHistory](/docs/api-reference/session-history) to be enabled so previous messages can be loaded from the database.
+
+## Persisting Sessions
+
+Save sessions to the database for later retrieval or continuation:
+
+```rust
+use appam::agent::history::SessionHistory;
+use appam::config::HistoryConfig;
+
+let history = SessionHistory::new(HistoryConfig {
+    enabled: true,
+    db_path: "data/sessions.db".into(),
+    auto_save: true,
+    max_sessions: Some(100),
+}).await?;
+
+let session = agent.run("Hello!").await?;
+
+// Save the session
+history.save_session(&session).await?;
+
+// Load it back later
+let loaded = history.load_session(&session.session_id).await?;
+```
+
+## With Streaming
+
+When using the `StreamBuilder`, the session is returned after the stream completes:
+
+```rust
+let session = agent
+    .stream("Explain quantum computing")
+    .on_content(|text| print!("{}", text))
+    .on_done(|| println!())
+    .run()
+    .await?;
+
+// Session is fully populated after run() completes
+if let Some(usage) = &session.usage {
+    println!("Tokens used: {}", usage.total_tokens());
+}
+```
+
+## Related Types
+
+- [SessionHistory](/docs/api-reference/session-history) -- persistence layer for saving and loading sessions
+- [ChatMessage](/docs/api-reference/chat-message) -- individual message type stored in `messages`
+- [StreamBuilder](/docs/api-reference/stream-builder) -- streaming execution that returns a session
+- [Agent trait](/docs/api-reference/agent-trait) -- defines `run()`, `run_streaming()`, and `continue_session()`

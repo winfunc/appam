@@ -1,0 +1,42 @@
+---
+title: Introduction
+description: Rust framework engineered for high-throughput, long-horizon, traceable AI agents with durable sessions and multi-provider execution.
+---
+
+Appam is a Rust framework for engineering AI agents in production environments where concurrency, durability, traceability, and long-running orchestration matter. It is built for high-availability, high-throughput agentic jobs with built-in tracing, session persistence, configurable continuation mechanics, and provider-aware runtime controls.
+
+Appam is designed for production workloads with automatic failure handling, provider-specific caching support, and durable traces that can be queried after the run.
+
+## What you get
+
+- **Production-oriented runtime** — engineered for long-horizon, multi-turn, tool-using workloads rather than single-shot demos.
+- **Nine provider variants** through one API — switch providers with a one-line change.
+- **Typed tool system** — define tools as Rust structs, closures, or TOML declarations.
+- **Streaming by default** — real-time events to console, channels, callbacks, or custom consumers.
+- **Traceability built in** — emit JSONL traces, stream structured events, and inspect runs after the fact.
+- **Session persistence** — conversations survive restarts via SQLite and can be resumed or queried later.
+- **Reliability controls** — retries, continuation mechanics, rate limiting, and provider-specific tuning knobs.
+- **Cost-aware execution** — use provider routing and caching features where supported.
+
+## Production optics
+
+Appam is designed for teams that need to run many agent sessions concurrently without losing visibility into what happened during each run. The core posture is:
+
+- High throughput through async Rust and concurrent provider clients.
+- High availability through retry handling, continuation logic, and resilient streaming paths.
+- Long-horizon execution through persisted session history and resumable agent loops.
+- Traceable execution through structured stream events, JSONL traces, and SQLite-backed history.
+- Easy extensibility through Rust-first tools, closure tools, TOML agents, and optional Python bridges.
+
+## Supported providers
+
+| Provider | API | Highlights |
+| --- | --- | --- |
+| Anthropic | Messages | Extended thinking, prompt caching, vision |
+| OpenAI | Responses | Reasoning models, structured outputs |
+| OpenRouter | Completions / Responses | Provider routing, any-model access |
+| Google Vertex | Gemini | Function calling, streaming, thinking |
+| Azure OpenAI | Responses | OpenAI models in Azure environments |
+| Azure Anthropic | Messages | Claude via Azure-hosted Anthropic-compatible endpoints |
+| AWS Bedrock | Messages | Anthropic workflows via Bedrock |
+| OpenAI Codex | Responses | ChatGPT subscription-backed Codex models |

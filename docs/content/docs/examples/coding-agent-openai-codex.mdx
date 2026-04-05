@@ -1,0 +1,68 @@
+---
+title: Coding Agent (OpenAI Codex)
+description: A readline-based coding agent that authenticates with a ChatGPT Codex subscription.
+---
+
+This page tracks `examples/coding-agent-openai-codex.rs`. The example is a
+terminal coding assistant built on `LlmProvider::OpenAICodex`, with streamed
+output, streamed reasoning text, the shared local file and shell tools, and an
+interactive ChatGPT login fallback when no cached Codex credential is available.
+
+## Run
+
+```bash
+export OPENAI_CODEX_MODEL="gpt-5.4"                    # optional
+export OPENAI_CODEX_ACCESS_TOKEN="eyJ..."              # optional explicit token
+export OPENAI_CODEX_AUTH_FILE="$HOME/.appam/auth.json" # optional auth cache override
+
+cargo run --example coding-agent-openai-codex
+```
+
+## What this example actually configures
+
+- `LlmProvider::OpenAICodex`
+- Model `OPENAI_CODEX_MODEL` or `gpt-5.4`
+- OpenAI reasoning with `ReasoningEffort::High` and `ReasoningSummary::Detailed`
+- `max_tokens(8192)`
+- The shared coding tools: `read_file`, `write_file`, `bash`, and `list_files`
+
+## Authentication behavior
+
+- If `OPENAI_CODEX_ACCESS_TOKEN` is set, the example uses it directly.
+- Otherwise it reads the auth cache from `OPENAI_CODEX_AUTH_FILE` (default:
+  `~/.appam/auth.json`).
+- If neither source is usable, the example opens the ChatGPT OAuth browser flow
+  and stores the resulting credential in the auth cache before starting the
+  agent loop.
+
+## Key builder setup
+
+```rust
+let agent = AgentBuilder::new("openai-codex-coding-assistant")
+    .provider(LlmProvider::OpenAICodex)
+    .model(&model)
+    .system_prompt(
+        "You are an expert coding assistant powered by GPT via an OpenAI Codex subscription. \
+         You have access to file operations, bash commands, and directory listing. \
+         Help users analyze code, refactor projects, debug issues, and manage files. \
+         Always think through problems step-by-step and use tools when appropriate.",
+    )
+    .openai_codex_access_token(access_token)
+    .openai_reasoning(appam::llm::openai::ReasoningConfig {
+        effort: Some(appam::llm::openai::ReasoningEffort::High),
+        summary: Some(appam::llm::openai::ReasoningSummary::Detailed),
+    })
+    .with_tool(Arc::new(read_file()))
+    .with_tool(Arc::new(write_file()))
+    .with_tool(Arc::new(bash()))
+    .with_tool(Arc::new(list_files()))
+    .max_tokens(8192)
+    .build()?;
+```
+
+## Runtime behavior
+
+- The binary prints the resolved auth source before starting the readline loop.
+- `.on_reasoning(...)` prints a separate "Reasoning" section when Codex emits
+  reasoning text.
+- Tool calls and tool results are streamed to the console during each turn.

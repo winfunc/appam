@@ -1,0 +1,197 @@
+---
+title: StreamEvent
+description: Enum representing all possible events emitted during agent streaming.
+---
+
+## Overview
+
+`StreamEvent` is a tagged enum that represents every observable event during agent execution. Events are emitted in real time as the agent processes a prompt, calls tools, and generates output. The enum derives `Serialize` and `Deserialize` with `#[serde(tag = "type", rename_all = "snake_case")]`, making it directly serializable to JSON for SSE, WebSocket, or file-based transport.
+
+**Import path:** `appam::agent::streaming::StreamEvent`
+
+## Definition
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum StreamEvent {
+    SessionStarted { session_id: String },
+    Content { content: String },
+    Reasoning { content: String },
+    ToolCallStarted { tool_name: String, arguments: String },
+    ToolCallCompleted { tool_name: String, result: serde_json::Value, success: bool, duration_ms: f64 },
+    ToolCallFailed { tool_name: String, error: String },
+    TurnCompleted,
+    UsageUpdate { snapshot: AggregatedUsage },
+    Done,
+    Error { message: String },
+}
+```
+
+## Variants
+
+### `SessionStarted`
+
+Emitted once at the beginning of agent execution, before any LLM call is made.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `session_id` | `String` | Unique identifier for this session. Use it to continue the conversation later. |
+
+### `Content`
+
+Emitted as the model generates text. Multiple `Content` events form the complete response -- concatenate them to build the full output.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `content` | `String` | A chunk of generated text. May be a single token or several tokens. |
+
+### `Reasoning`
+
+Emitted when a model with extended thinking (e.g., Claude with `thinking` enabled) exposes its reasoning process. These tokens are separate from the main content output.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `content` | `String` | A chunk of reasoning/thinking text. |
+
+### `ToolCallStarted`
+
+Emitted when the model decides to invoke a tool. The arguments are the complete, JSON-encoded arguments for the call.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `tool_name` | `String` | Name of the tool being called. |
+| `arguments` | `String` | JSON-encoded tool arguments. |
+
+### `ToolCallCompleted`
+
+Emitted after a tool finishes executing successfully or with a result.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `tool_name` | `String` | Name of the tool that completed. |
+| `result` | `serde_json::Value` | The tool's return value as a JSON value. |
+| `success` | `bool` | Whether the tool executed without error. |
+| `duration_ms` | `f64` | Wall-clock execution time in milliseconds. |
+
+### `ToolCallFailed`
+
+Emitted when a tool raises an error during execution. The error is reported back to the model so it can recover or retry.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `tool_name` | `String` | Name of the tool that failed. |
+| `error` | `String` | Human-readable error message. |
+
+### `TurnCompleted`
+
+Emitted when the agent completes one turn of interaction: user message, LLM response, tool calls (if any), and final response. In multi-turn conversations with tool use, multiple `TurnCompleted` events are emitted.
+
+This variant carries no data.
+
+### `UsageUpdate`
+
+Emitted after each LLM response with cumulative token usage statistics for the session. Enables real-time cost tracking.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `snapshot` | `AggregatedUsage` | Cumulative usage data including input/output tokens, cache tokens, reasoning tokens, cost, and request count. |
+
+### `Done`
+
+Terminal event indicating the agent has finished processing. No more events will be emitted after this. This variant carries no data.
+
+### `Error`
+
+Terminal event indicating an unrecoverable error. No more events will be emitted after this.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `message` | `String` | Human-readable error description. |
+
+## Event Ordering
+
+Events follow a predictable sequence during agent execution:
+
+```
+SessionStarted
+  -> Reasoning* (if extended thinking is enabled)
+  -> Content* (interleaved with Reasoning)
+  -> ToolCallStarted -> ToolCallCompleted | ToolCallFailed (per tool call)
+  -> UsageUpdate
+  -> TurnCompleted
+  -> (cycle repeats if the model calls tools and needs another turn)
+  -> Done | Error
+```
+
+Key ordering rules:
+
+1. `SessionStarted` is always the first event.
+2. `Content` and `Reasoning` events may interleave during a single turn.
+3. Tool call events (`ToolCallStarted` followed by `ToolCallCompleted` or `ToolCallFailed`) occur after the model's response for that turn.
+4. `UsageUpdate` is emitted after each LLM response, before `TurnCompleted`.
+5. `TurnCompleted` marks the end of a single turn. If tools were called, the agent may start another turn.
+6. `Done` or `Error` is always the last event.
+
+## Pattern Matching
+
+Handle events using standard Rust pattern matching:
+
+```rust
+use appam::agent::streaming::StreamEvent;
+
+fn handle_event(event: &StreamEvent) {
+    match event {
+        StreamEvent::SessionStarted { session_id } => {
+            println!("Session: {}", session_id);
+        }
+        StreamEvent::Content { content } => {
+            print!("{}", content);
+        }
+        StreamEvent::Reasoning { content } => {
+            // Display reasoning in a different color or panel
+            eprint!("{}", content);
+        }
+        StreamEvent::ToolCallStarted { tool_name, arguments } => {
+            println!("[Calling {} with {}]", tool_name, arguments);
+        }
+        StreamEvent::ToolCallCompleted { tool_name, result, success, duration_ms } => {
+            if *success {
+                println!("[{} completed in {:.1}ms: {}]", tool_name, duration_ms, result);
+            }
+        }
+        StreamEvent::ToolCallFailed { tool_name, error } => {
+            eprintln!("[{} failed: {}]", tool_name, error);
+        }
+        StreamEvent::UsageUpdate { snapshot } => {
+            println!("[Tokens: {} | Cost: ${:.4}]",
+                snapshot.total_tokens(), snapshot.total_cost_usd);
+        }
+        StreamEvent::TurnCompleted => {
+            // Optionally track turn count
+        }
+        StreamEvent::Done => {
+            println!("\n[Complete]");
+        }
+        StreamEvent::Error { message } => {
+            eprintln!("Fatal: {}", message);
+        }
+    }
+}
+```
+
+## JSON Serialization
+
+`StreamEvent` serializes to tagged JSON using `serde`. The `type` field discriminates variants, and field names are snake_case:
+
+```json
+{"type": "session_started", "session_id": "abc-123"}
+{"type": "content", "content": "Hello, "}
+{"type": "content", "content": "world!"}
+{"type": "tool_call_started", "tool_name": "read_file", "arguments": "{\"path\": \"src/main.rs\"}"}
+{"type": "tool_call_completed", "tool_name": "read_file", "result": {"output": "fn main() {}"}, "success": true, "duration_ms": 12.5}
+{"type": "turn_completed"}
+{"type": "done"}
+```
+
+This makes `StreamEvent` directly usable in Server-Sent Events (SSE) and WebSocket protocols.

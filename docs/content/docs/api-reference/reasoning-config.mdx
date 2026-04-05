@@ -1,0 +1,128 @@
+---
+title: ReasoningConfig
+description: OpenAI and OpenRouter reasoning configuration types plus AgentBuilder's ReasoningProvider wrapper.
+---
+
+Appam has two distinct reasoning config types:
+
+- `appam::llm::openai::ReasoningConfig`
+- `appam::llm::openrouter::config::ReasoningConfig`
+
+`AgentBuilder` can accept them explicitly through `ReasoningProvider`.
+
+## OpenAI
+
+```rust
+pub struct ReasoningConfig {
+    pub effort: Option<ReasoningEffort>,
+    pub summary: Option<ReasoningSummary>,
+}
+```
+
+Current effort enum:
+
+```rust
+pub enum ReasoningEffort {
+    None,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    XHigh,
+}
+```
+
+Current summary enum:
+
+```rust
+pub enum ReasoningSummary {
+    Auto,
+    Concise,
+    Detailed,
+}
+```
+
+Current helpers:
+
+```rust
+pub fn auto() -> Self
+pub fn high_effort() -> Self
+pub fn xhigh_effort() -> Self
+pub fn no_reasoning() -> Self
+pub fn low_latency() -> Self
+pub fn minimal() -> Self
+pub fn custom(effort: ReasoningEffort, summary: ReasoningSummary) -> Self
+pub fn resolve_reasoning_effort_for_model(model: &str, requested_effort: Option<ReasoningEffort>) -> ReasoningEffort
+```
+
+Important behavior from the current code:
+
+- If no effort is set, Appam picks a model-specific default.
+- Unsupported `XHigh` requests are downgraded to `High`.
+- `ReasoningEffort::None` is a first-class value and is required for some GPT-5.4 sampling combinations.
+
+## OpenRouter
+
+```rust
+pub struct ReasoningConfig {
+    pub enabled: Option<bool>,
+    pub effort: Option<ReasoningEffort>,
+    pub max_tokens: Option<u32>,
+    pub exclude: Option<bool>,
+    pub summary: Option<SummaryVerbosity>,
+}
+```
+
+Enums:
+
+```rust
+pub enum ReasoningEffort {
+    Minimal,
+    Low,
+    Medium,
+    High,
+}
+
+pub enum SummaryVerbosity {
+    Auto,
+    Concise,
+    Detailed,
+}
+```
+
+Helpers:
+
+```rust
+pub fn high_effort(max_tokens: u32) -> Self
+pub fn excluded() -> Self
+```
+
+Defaults from `Default`:
+
+- `enabled = Some(true)`
+- `effort = Some(Medium)`
+- `exclude = Some(false)`
+- `summary = Some(Auto)`
+
+## Builder integration
+
+```rust
+pub enum ReasoningProvider {
+    OpenAI(openai::ReasoningConfig),
+    OpenRouter(openrouter::config::ReasoningConfig),
+}
+```
+
+You can configure reasoning with either:
+
+```rust
+.reasoning(ReasoningProvider::OpenAI(...))
+.reasoning(ReasoningProvider::OpenRouter(...))
+```
+
+or the shorthands:
+
+```rust
+.openai_reasoning(...)
+.openrouter_reasoning(...)
+```

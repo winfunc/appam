@@ -1,0 +1,55 @@
+---
+title: Coding Agent (OpenRouter Responses)
+description: A readline-based coding agent that uses OpenRouter's responses path with explicit reasoning controls.
+---
+
+`examples/coding-agent-openrouter-responses.rs` shows the OpenRouter Responses provider variant. Unlike the completions sample, this one enables OpenRouter's explicit reasoning configuration and keeps the rest of the terminal loop aligned with the other coding-agent examples.
+
+## Run
+
+```bash
+export OPENROUTER_API_KEY="sk-or-..."
+cargo run --example coding-agent-openrouter-responses
+```
+
+## What this example actually configures
+
+- `LlmProvider::OpenRouterResponses`
+- Model `openai/gpt-4o`
+- OpenRouter reasoning with `enabled: true`, `effort: High`, `summary: Detailed`, and `max_tokens: None`
+- `max_tokens(8192)` at the builder level
+- The shared coding tools: `read_file`, `write_file`, `bash`, and `list_files`
+
+## Key builder setup
+
+```rust
+let agent = AgentBuilder::new("coding-assistant")
+    .provider(LlmProvider::OpenRouterResponses)
+    .model("openai/gpt-4o")
+    .system_prompt(
+        "You are an expert coding assistant with access to file operations and bash commands. \
+         Help users with code analysis, file management, and system tasks. \
+         Always use the appropriate tools when working with files or executing commands.",
+    )
+    .reasoning(appam::agent::ReasoningProvider::OpenRouter(
+        appam::llm::openrouter::ReasoningConfig {
+            enabled: Some(true),
+            effort: Some(appam::llm::openrouter::ReasoningEffort::High),
+            max_tokens: None,
+            exclude: Some(false),
+            summary: Some(appam::llm::openrouter::SummaryVerbosity::Detailed),
+        },
+    ))
+    .with_tool(Arc::new(read_file()))
+    .with_tool(Arc::new(write_file()))
+    .with_tool(Arc::new(bash()))
+    .with_tool(Arc::new(list_files()))
+    .max_tokens(8192)
+    .build()?;
+```
+
+## Runtime behavior
+
+- The reasoning config chooses `effort`, so the embedded OpenRouter reasoning block leaves `max_tokens` unset.
+- The outer builder still sets response `max_tokens(8192)`.
+- Reasoning, tool calls, and tool results are streamed to the terminal during each turn.

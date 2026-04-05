@@ -1,0 +1,89 @@
+---
+title: Prelude
+description: "`appam::prelude::*` re-exports for the common agent, tool, streaming, config, and error surfaces."
+---
+
+The prelude is defined in `src/lib.rs` and is the fastest way to write Appam code:
+
+```rust
+use appam::prelude::*;
+```
+
+## What it exports
+
+### Agent and streaming
+
+- `AgentTrait`
+- `AgentBuilder`
+- `RuntimeAgent`
+- `Session`
+- `TomlAgent`
+- `Agent`
+- `AgentQuick`
+- `AgentBuilderToolExt`
+- `StreamConsumer`
+- `StreamEvent`
+- `StreamBuilder`
+
+### Built-in consumers
+
+- `CallbackConsumer`
+- `ChannelConsumer`
+- `ConsoleConsumer`
+- `TraceConsumer`
+
+### Errors and history
+
+- `ToolExecutionError`
+- `analyze_tool_error`
+- `SessionHistory`
+- `SessionSummary`
+
+### Configuration
+
+- `load_config_from_env`
+- `load_global_config`
+- `AgentConfigBuilder`
+- `AppConfig`
+- `AppConfigBuilder`
+- `HistoryConfig`
+- `LogFormat`
+- `LoggingConfig`
+- `TraceFormat`
+
+### LLM and tool types
+
+- `ChatMessage`
+- `DynamicLlmClient`
+- `LlmClient`
+- `LlmProvider`
+- `Role`
+- `ToolSpec`
+- `UnifiedMessage`
+- `UnifiedTool`
+- `UnifiedToolCall`
+- `Tool`
+- `ToolRegistry`
+- `ClosureTool`
+- `ToolRegistryExt`
+
+### Macros and convenience imports
+
+- `tool`
+- `Schema`
+- `anyhow`, `bail`, `Context`, `Result`
+- `Deserialize`, `Serialize`
+- `json`, `Value`
+- `Arc`
+- `tokio`
+
+## Not in the prelude
+
+Some secondary types still need explicit imports, for example:
+
+```rust
+use appam::agent::consumers::SqliteTraceConsumer;
+use appam::llm::pricing::{calculate_cost, get_model_pricing};
+use appam::llm::usage::UsageTracker;
+use appam::web::state::AppState;
+```

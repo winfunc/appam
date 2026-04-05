@@ -1,0 +1,231 @@
+---
+title: Sessions
+description: Session persistence with SQLite-backed conversation history.
+---
+
+## Overview
+
+A session captures the full state of an agent conversation: messages, metadata, token usage, and timing. Appam can persist sessions to a SQLite database, enabling conversation continuation across runs, historical analysis, and debugging.
+
+## The Session Struct
+
+Every agent interaction returns a `Session`:
+
+```rust
+pub struct Session {
+    pub session_id: String,
+    pub agent_name: String,
+    pub model: String,
+    pub messages: Vec<ChatMessage>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub ended_at: Option<DateTime<Utc>>,
+    pub usage: Option<AggregatedUsage>,
+}
+```
+
+The `messages` vector contains the complete conversation history -- system prompt, user messages, assistant responses, tool calls, and tool results. This is the full context the model saw during the conversation.
+
+## Session Continuation
+
+Continue a previous conversation by passing the session ID:
+
+```rust
+use appam::prelude::*;
+
+let agent = Agent::quick(
+    "anthropic/claude-sonnet-4-5",
+    "You are a helpful assistant.",
+    vec![],
+)?;
+
+// First interaction
+let session = agent.run("What is Rust?").await?;
+println!("Session: {}", session.session_id);
+
+// Continue the conversation -- all previous messages are loaded
+let continued = agent
+    .continue_session(&session.session_id, "How does ownership work?")
+    .await?;
+```
+
+The runtime loads the previous session from the database, appends the new user message, and sends the full conversation history to the LLM. The model sees all prior context.
+
+For custom streaming during continuation:
+
+```rust
+use appam::agent::consumers::ChannelConsumer;
+
+let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+let consumer = ChannelConsumer::new(tx);
+
+agent
+    .continue_session_streaming(
+        &session.session_id,
+        "Tell me more",
+        Box::new(consumer),
+    )
+    .await?;
+```
+
+Session continuation requires history to be enabled (see below).
+
+## SessionHistory
+
+`SessionHistory` is the high-level API for managing persisted sessions. It wraps a SQLite database and handles all CRUD operations.
+
+```rust
+use appam::agent::history::SessionHistory;
+use appam::config::HistoryConfig;
+
+let config = HistoryConfig {
+    enabled: true,
+    db_path: "data/sessions.db".into(),
+    auto_save: true,
+    max_sessions: Some(1000),
+};
+
+let history = SessionHistory::new(config).await?;
+```
+
+When history is disabled (the default), all operations are no-ops and return empty results. This means you can call history methods unconditionally without checking the enabled state.
+
+### Creating and Loading Sessions
+
+```rust
+// Create a new session
+history.create_session(&session).await?;
+
+// Load by ID
+let loaded = history.load_session("session-abc-123").await?;
+if let Some(session) = loaded {
+    println!("Found session with {} messages", session.messages.len());
+}
+
+// Save or update
+history.save_session(&session).await?;
+```
+
+### Appending Messages
+
+For efficiency when adding messages to an existing session, use `append_messages` instead of loading, modifying, and saving the entire session:
+
+```rust
+let new_messages = vec![user_message, assistant_response];
+history.append_messages("session-abc-123", &new_messages).await?;
+```
+
+### Listing Sessions
+
+```rust
+// List all sessions (ordered by most recent activity)
+let sessions = history.list_sessions().await?;
+
+// Filter by agent name
+let agent_sessions = history.list_agent_sessions("my-agent").await?;
+
+for summary in &sessions {
+    println!(
+        "{} | {} | {} messages | {} tool calls",
+        summary.id, summary.agent_name, summary.message_count, summary.tool_call_count
+    );
+}
+```
+
+### SessionSummary
+
+Listing operations return `SessionSummary` structs with essential metadata, avoiding the cost of deserializing full message histories:
+
+```rust
+pub struct SessionSummary {
+    pub id: String,
+    pub agent_name: String,
+    pub model: String,
+    pub message_count: usize,
+    pub turn_count: i32,
+    pub tool_call_count: i32,
+    pub started_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub ended_at: Option<DateTime<Utc>>,
+}
+```
+
+### Deleting and Pruning
+
+```rust
+// Delete a specific session
+let deleted = history.delete_session("session-abc-123").await?;
+assert!(deleted); // true if found and deleted
+
+// Get session count
+let count = history.session_count().await?;
+
+// Enforce maximum session limit (deletes oldest sessions)
+let pruned = history.enforce_max_sessions().await?;
+println!("Pruned {} old sessions", pruned);
+```
+
+`enforce_max_sessions` respects the `max_sessions` value from `HistoryConfig`. If no limit is configured, it returns 0.
+
+## Configuration
+
+### HistoryConfig
+
+```rust
+pub struct HistoryConfig {
+    pub enabled: bool,               // Default: false
+    pub db_path: PathBuf,            // Default: "data/sessions.db"
+    pub auto_save: bool,             // Default: true
+    pub max_sessions: Option<usize>, // Default: None (unlimited)
+}
+```
+
+### TOML Configuration
+
+```toml
+[history]
+enabled = true
+db_path = "data/sessions.db"
+auto_save = true
+max_sessions = 1000
+```
+
+### Environment Variables
+
+Environment variables override TOML and programmatic settings:
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `APPAM_HISTORY_ENABLED` | Enable/disable session history | `"true"` |
+| `APPAM_HISTORY_DB_PATH` | Database file path | `"/data/sessions.db"` |
+
+### Programmatic Configuration
+
+```rust
+use appam::config::AppConfigBuilder;
+
+let config = AppConfigBuilder::new()
+    .enable_history("data/my_sessions.db")
+    .history_auto_save(true)
+    .history_max_sessions(500)
+    .build();
+```
+
+## Database Schema
+
+Sessions are stored in a single `session_history` table with the following columns:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | TEXT (PK) | Session ID |
+| `agent_name` | TEXT | Agent name |
+| `model` | TEXT | Model identifier |
+| `messages` | TEXT | JSON-serialized message history |
+| `metadata` | TEXT | Optional metadata |
+| `started_at` | TEXT | ISO 8601 timestamp |
+| `updated_at` | TEXT | ISO 8601 timestamp |
+| `ended_at` | TEXT | ISO 8601 timestamp (nullable) |
+| `turn_count` | INTEGER | Number of assistant turns |
+| `tool_call_count` | INTEGER | Number of tool invocations |
+| `usage` | TEXT | JSON-serialized token usage |
+
+Indexes are created on `updated_at`, `agent_name`, and `started_at` for efficient querying.

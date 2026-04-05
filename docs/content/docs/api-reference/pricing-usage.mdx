@@ -1,0 +1,276 @@
+---
+title: Pricing & Usage
+description: Token usage tracking and cost calculation across providers.
+---
+
+## Overview
+
+Appam provides built-in token usage tracking and cost estimation across all supported providers. Two core types power this system: `AggregatedUsage` for cumulative token statistics and `ModelPricing` for per-model cost data loaded from an embedded models.dev seed snapshot that can refresh from the live API at initialization.
+
+**Import paths:**
+- `appam::llm::usage::AggregatedUsage`
+- `appam::llm::usage::UsageTracker`
+- `appam::llm::pricing::ModelPricing`
+
+## AggregatedUsage
+
+Tracks cumulative token consumption and calculated costs across all LLM requests in a session. All token counts are 64-bit to handle large batch operations.
+
+```rust
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AggregatedUsage {
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    pub total_cache_creation_tokens: u64,
+    pub total_cache_read_tokens: u64,
+    pub total_reasoning_tokens: u64,
+    pub total_cost_usd: f64,
+    pub request_count: u64,
+}
+```
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `total_input_tokens` | `u64` | Total input tokens sent to the model across all requests |
+| `total_output_tokens` | `u64` | Total output tokens generated across all requests |
+| `total_cache_creation_tokens` | `u64` | Tokens written to prompt cache entries |
+| `total_cache_read_tokens` | `u64` | Tokens served from cache (reduced cost) |
+| `total_reasoning_tokens` | `u64` | Reasoning/thinking tokens for extended thinking models (e.g., OpenAI o1/o3, Claude with thinking) |
+| `total_cost_usd` | `f64` | Estimated total cost in USD, calculated automatically from token counts and model pricing |
+| `request_count` | `u64` | Number of LLM API requests made during the session |
+
+### Methods
+
+#### `new()`
+
+```rust
+pub fn new() -> Self
+```
+
+Creates a new empty usage tracker with all counters at zero.
+
+#### `add_usage()`
+
+```rust
+pub fn add_usage(&mut self, usage: &UnifiedUsage, provider: &str, model: &str)
+```
+
+Adds usage from a single LLM request. Updates all cumulative counters and automatically calculates and adds the cost based on the provider and model pricing.
+
+#### `total_tokens()`
+
+```rust
+pub fn total_tokens(&self) -> u64
+```
+
+Returns the sum of `total_input_tokens + total_output_tokens`.
+
+#### `total_tokens_with_reasoning()`
+
+```rust
+pub fn total_tokens_with_reasoning(&self) -> u64
+```
+
+Returns `total_tokens() + total_reasoning_tokens`.
+
+#### `format_display()`
+
+```rust
+pub fn format_display(&self) -> String
+```
+
+Formats usage for compact display. Output adapts to scale:
+- `"42 tokens | $0.0001"` for small counts
+- `"191K tokens | $0.30"` for thousands
+- `"2.5M tokens | $15.50"` for millions
+
+#### `format_detailed()`
+
+```rust
+pub fn format_detailed(&self) -> String
+```
+
+Returns a multi-line string with a full breakdown of all token types and cost.
+
+### Accessing Usage After a Run
+
+`AggregatedUsage` is available in `Session.usage` after an agent run completes:
+
+```rust
+use appam::prelude::*;
+
+let agent = Agent::quick(
+    "anthropic/claude-sonnet-4-5",
+    "You are a helpful assistant.",
+    vec![],
+)?;
+
+let session = agent.run("Hello!").await?;
+
+if let Some(usage) = &session.usage {
+    println!("Input tokens:    {}", usage.total_input_tokens);
+    println!("Output tokens:   {}", usage.total_output_tokens);
+    println!("Reasoning:       {}", usage.total_reasoning_tokens);
+    println!("Cache created:   {}", usage.total_cache_creation_tokens);
+    println!("Cache read:      {}", usage.total_cache_read_tokens);
+    println!("Total cost:      ${:.4}", usage.total_cost_usd);
+    println!("Requests:        {}", usage.request_count);
+    println!();
+    println!("{}", usage.format_display());
+}
+```
+
+### Real-Time Usage via Streaming
+
+During streaming, usage snapshots are emitted via `StreamEvent::UsageUpdate`:
+
+```rust
+let session = agent
+    .stream("Explain quantum computing")
+    .on_content(|text| print!("{}", text))
+    .run()
+    .await?;
+
+if let Some(usage) = &session.usage {
+    println!("\n{}", usage.format_detailed());
+}
+```
+
+You can also listen to usage updates in real time with pattern matching on `StreamEvent`:
+
+```rust
+StreamEvent::UsageUpdate { snapshot } => {
+    println!("[Tokens: {} | Cost: ${:.4}]",
+        snapshot.total_tokens(), snapshot.total_cost_usd);
+}
+```
+
+## UsageTracker
+
+A thread-safe wrapper around `AggregatedUsage` for concurrent operations. Internally wraps the usage struct in `Arc<Mutex<>>`.
+
+```rust
+#[derive(Debug, Clone)]
+pub struct UsageTracker {
+    pub inner: Arc<Mutex<AggregatedUsage>>,
+}
+```
+
+### Methods
+
+| Method | Description |
+|--------|-------------|
+| `new()` | Create a new tracker with zeroed counters |
+| `add_usage(usage, provider, model)` | Thread-safe usage addition |
+| `merge_aggregated(other)` | Merge another `AggregatedUsage` into this tracker |
+| `get_snapshot()` | Get a clone of the current aggregated usage |
+| `format_display()` | Convenience method for compact display |
+| `format_detailed()` | Convenience method for detailed breakdown |
+
+## ModelPricing
+
+Provides per-model cost data loaded from an embedded models.dev seed snapshot. At pricing initialization, Appam tries to refresh this data from `https://models.dev/api.json`, persists successful syncs to `data/pricing/models.dev.json`, and falls back to the persisted cache or embedded seed when offline. All rates are in USD per million tokens.
+
+```rust
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelPricing {
+    pub name: String,
+    pub input: Option<f64>,
+    pub output: Option<f64>,
+    pub cache_write: Option<f64>,
+    pub cache_read: Option<f64>,
+    pub reasoning: Option<f64>,
+    // Tiered pricing fields (for models like Sonnet 4.5)
+    pub input_base: Option<f64>,
+    pub input_extended: Option<f64>,
+    pub output_base: Option<f64>,
+    pub output_extended: Option<f64>,
+    pub cache_write_base: Option<f64>,
+    pub cache_write_extended: Option<f64>,
+    pub cache_read_base: Option<f64>,
+    pub cache_read_extended: Option<f64>,
+    pub threshold_tokens: Option<u32>,
+}
+```
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `String` | Human-readable model name |
+| `input` | `Option<f64>` | Input token price per million tokens |
+| `output` | `Option<f64>` | Output token price per million tokens |
+| `cache_write` | `Option<f64>` | Cache creation price per million tokens |
+| `cache_read` | `Option<f64>` | Cache read price per million tokens |
+| `reasoning` | `Option<f64>` | Reasoning token price per million tokens (OpenAI o1/o3 models) |
+
+#### Tiered Pricing
+
+Some models (e.g., Claude Sonnet 4.5) use tiered pricing where rates change based on total prompt size:
+
+| Field | Description |
+|-------|-------------|
+| `input_base` / `input_extended` | Input rates below/above the threshold |
+| `output_base` / `output_extended` | Output rates below/above the threshold |
+| `cache_write_base` / `cache_write_extended` | Cache write rates below/above the threshold |
+| `cache_read_base` / `cache_read_extended` | Cache read rates below/above the threshold |
+| `threshold_tokens` | Token count threshold separating base and extended tiers |
+
+### Pricing Functions
+
+#### `get_model_pricing()`
+
+```rust
+pub fn get_model_pricing(provider: &str, model: &str) -> &'static ModelPricing
+```
+
+Looks up pricing for a specific provider and model. Appam applies provider-aware normalization before lookup, including `openai/<model>` aliases, legacy Anthropic IDs, and Bedrock Anthropic model IDs. Returns default pricing if the model is not found and logs a warning when falling back.
+
+Supported provider keys: `"anthropic"`, `"openai"`, `"openrouter"`, `"vertex"`.
+
+#### `calculate_cost()`
+
+```rust
+pub fn calculate_cost(usage: &UnifiedUsage, provider: &str, model: &str) -> f64
+```
+
+Computes the total cost in USD based on token consumption and model pricing. Handles both flat and tiered pricing models. Cache-read tokens are subtracted from billable input tokens to avoid double-charging, and reasoning tokens fall back to the selected output rate when models.dev omits an explicit reasoning price.
+
+```rust
+use appam::llm::pricing::calculate_cost;
+use appam::llm::UnifiedUsage;
+
+let usage = UnifiedUsage {
+    input_tokens: 1000,
+    output_tokens: 500,
+    cache_creation_input_tokens: Some(200),
+    cache_read_input_tokens: Some(800),
+    reasoning_tokens: None,
+};
+
+let cost = calculate_cost(&usage, "anthropic", "claude-sonnet-4-20250514");
+println!("Cost: ${:.4}", cost);
+```
+
+## Provider Support
+
+Usage tracking is implemented for all supported providers:
+
+| Provider | Token Tracking | Cache Tracking | Reasoning Tokens | Cost Calculation |
+|----------|---------------|----------------|------------------|------------------|
+| Anthropic | Full | Cache creation + read | Via extended thinking | Full |
+| OpenAI | Full | Cached input tokens | o1/o3 reasoning tokens | Full |
+| OpenRouter | Full | Cached tokens | Reasoning tokens | Full |
+| Vertex AI | Full | Cache creation + read | Via extended thinking | Full |
+| Azure OpenAI | Full | Cached tokens | Reasoning tokens | Uses OpenAI pricing |
+| Azure Anthropic | Full | Cache creation + read | Via extended thinking | Uses Anthropic pricing |
+| Bedrock | Full | Cache creation + read | Via extended thinking | Uses Anthropic pricing |
+
+## Source
+
+- `AggregatedUsage` and `UsageTracker` are defined in [`src/llm/usage.rs`](https://github.com/winfunc/appam/blob/main/src/llm/usage.rs).
+- `ModelPricing` and cost calculation are defined in [`src/llm/pricing.rs`](https://github.com/winfunc/appam/blob/main/src/llm/pricing.rs).
+- The embedded seed snapshot lives in [`src/llm/pricing_seed.json`](https://github.com/winfunc/appam/blob/main/src/llm/pricing_seed.json).
+- Runtime syncs are fetched from [`models.dev/api.json`](https://models.dev/api.json) and cached at `data/pricing/models.dev.json`.

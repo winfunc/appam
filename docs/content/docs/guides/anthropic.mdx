@@ -1,0 +1,114 @@
+---
+title: Anthropic Provider
+description: Use Claude models with Appam's Anthropic client, including thinking, caching, and beta features.
+---
+
+## Setup
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+```
+
+## Quick Start
+
+Anthropic is auto-detected from `anthropic/...` and `claude-...` model strings:
+
+```rust
+use appam::prelude::*;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let agent = Agent::quick(
+        "anthropic/claude-sonnet-4-5",
+        "You are a helpful assistant.",
+        vec![],
+    )?;
+
+    agent
+        .stream("What is the capital of France?")
+        .on_content(|text| print!("{}", text))
+        .run()
+        .await?;
+
+    Ok(())
+}
+```
+
+## Explicit Builder Form
+
+```rust
+use appam::prelude::*;
+
+let agent = AgentBuilder::new("anthropic-agent")
+    .provider(LlmProvider::Anthropic)
+    .model("claude-sonnet-4-5")
+    .system_prompt("You are a helpful assistant.")
+    .build()?;
+```
+
+## Extended Thinking
+
+Use fixed-budget thinking on the mainstream Claude 4.x / Sonnet 4.5 path:
+
+```rust
+use appam::prelude::*;
+
+let agent = AgentBuilder::new("thinking-agent")
+    .provider(LlmProvider::Anthropic)
+    .model("claude-sonnet-4-5")
+    .system_prompt("You are a thoughtful assistant.")
+    .thinking(ThinkingConfig::enabled(16_000))
+    .build()?;
+```
+
+The current `ThinkingConfig` type also supports `ThinkingConfig::adaptive()` for the adaptive-thinking model family discussed in the Anthropic config docs.
+
+## Prompt Caching
+
+```rust
+use appam::prelude::*;
+
+let agent = AgentBuilder::new("cached-agent")
+    .provider(LlmProvider::Anthropic)
+    .model("claude-sonnet-4-5")
+    .system_prompt("You are a helpful assistant.")
+    .caching(CachingConfig::default())
+    .build()?;
+```
+
+`CachingConfig::default()` enables caching with a five-minute TTL. You can switch to `CacheTTL::OneHour` when needed.
+
+## Effort and Beta Features
+
+```rust
+use appam::prelude::*;
+
+let agent = AgentBuilder::new("advanced-agent")
+    .provider(LlmProvider::Anthropic)
+    .model("claude-opus-4-5-20251101")
+    .system_prompt("You are a thoughtful assistant.")
+    .effort(EffortLevel::High)
+    .beta_features(BetaFeatures {
+        context_1m: true,
+        ..Default::default()
+    })
+    .build()?;
+```
+
+The current Anthropic config also exposes:
+
+- `tool_choice(...)`
+- `retry(...)`
+- `rate_limiter(...)`
+- `beta_features(...)`
+
+## Model Identifiers in This Crate
+
+The source currently documents examples such as:
+
+- `claude-sonnet-4-5`
+- `claude-opus-4-5-20251101`
+- `claude-opus-4-20250514`
+- `claude-3-7-sonnet-20250219`
+
+Keep the exact identifier aligned with the provider account and endpoint you are using.

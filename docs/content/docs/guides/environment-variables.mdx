@@ -1,0 +1,126 @@
+---
+title: Environment Variables
+description: Environment variables currently read by Appam's config loader, providers, and examples.
+---
+
+Environment variables override file-backed config where `load_config_from_env()` or `load_global_config()` applies them. A few provider-specific variables are also consumed directly by provider constructors or the example binaries.
+
+## Provider Selection
+
+| Variable | Description |
+| --- | --- |
+| `APPAM_PROVIDER` | Provider override parsed through `LlmProvider::from_str` |
+
+Accepted values include `anthropic`, `openrouter`, `openrouter-completions`, `openrouter-responses`, `openai`, `openai-codex`, `vertex`, `azure-openai`, `azure-anthropic`, and `bedrock`.
+
+## OpenRouter
+
+| Variable | Description |
+| --- | --- |
+| `OPENROUTER_API_KEY` | OpenRouter API key |
+| `OPENROUTER_MODEL` | Model override |
+| `OPENROUTER_BASE_URL` | Base URL override |
+
+## Anthropic
+
+| Variable | Description |
+| --- | --- |
+| `ANTHROPIC_API_KEY` | Anthropic API key |
+| `ANTHROPIC_MODEL` | Model override |
+| `ANTHROPIC_BASE_URL` | Base URL override |
+| `ANTHROPIC_DEBUG` | Extra debug output in the Anthropic client |
+
+## Azure Anthropic
+
+| Variable | Description |
+| --- | --- |
+| `AZURE_API_KEY` | Azure Anthropic fallback credential used by the example flow and client fallback logic |
+| `AZURE_ANTHROPIC_API_KEY` | Azure Anthropic API key for `x-api-key` auth |
+| `AZURE_ANTHROPIC_AUTH_TOKEN` | Azure Anthropic bearer token for `Authorization: Bearer ...` auth |
+| `AZURE_ANTHROPIC_BASE_URL` | Full Azure Anthropic base URL used by provider parsing and examples |
+| `AZURE_ANTHROPIC_RESOURCE` | Resource name used to derive `https://{resource}.services.ai.azure.com/anthropic` |
+| `AZURE_ANTHROPIC_MODEL` | Azure Anthropic deployment/model override used by config loading and examples |
+| `AZURE_ANTHROPIC_AUTH_METHOD` | Azure Anthropic auth method override: `x_api_key` or `bearer` |
+
+## OpenAI
+
+| Variable | Description |
+| --- | --- |
+| `OPENAI_API_KEY` | OpenAI API key |
+| `OPENAI_MODEL` | Model override |
+| `OPENAI_BASE_URL` | Base URL override |
+| `OPENAI_ORGANIZATION` | Optional organization header |
+| `OPENAI_PROJECT` | Optional project header |
+
+## OpenAI Codex
+
+| Variable | Description |
+| --- | --- |
+| `OPENAI_CODEX_MODEL` | Codex model override |
+| `OPENAI_CODEX_BASE_URL` | Codex backend base URL override |
+| `OPENAI_CODEX_ACCESS_TOKEN` | Explicit ChatGPT OAuth access token |
+| `OPENAI_CODEX_AUTH_FILE` | Auth cache file path override |
+
+## Azure OpenAI
+
+| Variable | Description |
+| --- | --- |
+| `AZURE_OPENAI_API_KEY` | Azure API key |
+| `AZURE_OPENAI_RESOURCE` | Azure resource name used by Azure provider parsing and examples |
+| `AZURE_OPENAI_API_VERSION` | Azure API version used by Azure provider parsing and examples |
+| `AZURE_OPENAI_MODEL` | Azure deployment/model override used by config loading and examples |
+
+## Google Vertex
+
+| Variable | Description |
+| --- | --- |
+| `GOOGLE_VERTEX_API_KEY` | Primary Vertex/Gemini API key |
+| `GOOGLE_API_KEY` | Fallback API key |
+| `GEMINI_API_KEY` | Fallback API key |
+| `GOOGLE_VERTEX_ACCESS_TOKEN` | OAuth bearer token |
+| `GOOGLE_VERTEX_MODEL` | Model override |
+| `GOOGLE_VERTEX_LOCATION` | Region override |
+| `GOOGLE_VERTEX_PROJECT` | Google Cloud project ID |
+| `GOOGLE_VERTEX_BASE_URL` | Base URL override |
+| `GOOGLE_VERTEX_INCLUDE_THOUGHTS` | Enables thought content in Vertex config |
+| `GOOGLE_VERTEX_THINKING_LEVEL` | Sets the thinking level hint |
+
+## AWS Bedrock
+
+| Variable | Description |
+| --- | --- |
+| `AWS_ACCESS_KEY_ID` | SigV4 access key |
+| `AWS_SECRET_ACCESS_KEY` | SigV4 secret key |
+| `AWS_SESSION_TOKEN` | Optional temporary session token |
+| `AWS_REGION` | Bedrock region |
+| `AWS_DEFAULT_REGION` | Region fallback |
+| `AWS_BEDROCK_MODEL_ID` | Default Bedrock model ID |
+| `AWS_BEARER_TOKEN_BEDROCK` | Bearer-token auth path for Bedrock |
+| `AWS_BEDROCK_AUTH_METHOD` | Example-binary auth selector (`sigv4`, `bearer`, or `bearer_token`) |
+
+## Logging and Traces
+
+| Variable | Description |
+| --- | --- |
+| `APPAM_LOG_LEVEL` | Log level |
+| `APPAM_LOGS_DIR` | Log directory |
+| `APPAM_LOG_FORMAT` | `plain`, `json`, or `both` |
+| `APPAM_TRACE_FORMAT` | `compact` or `detailed` |
+| `APPAM_ENABLE_TRACES` | Enables session trace files |
+| `APPAM_ENABLE_LOGS` | Enables framework log files |
+
+## Session History
+
+| Variable | Description |
+| --- | --- |
+| `APPAM_HISTORY_ENABLED` | Enables SQLite-backed session history |
+| `APPAM_HISTORY_DB_PATH` | History database path |
+
+## Not Currently Supported via Env
+
+The current config loader does not read environment overrides for:
+
+- web host / port / CORS
+- web rate limits
+
+Use CLI flags, direct `web::serve(...)` arguments, or code-level config for those paths.

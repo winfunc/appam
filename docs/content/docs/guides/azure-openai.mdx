@@ -1,0 +1,76 @@
+---
+title: Azure OpenAI Provider
+description: Use Azure-hosted OpenAI deployments through Appam's OpenAI client.
+---
+
+## Setup
+
+Appam's Azure support uses the OpenAI Responses client with an Azure-specific provider enum.
+
+```bash
+export AZURE_OPENAI_API_KEY="..."
+export AZURE_OPENAI_RESOURCE="my-resource"
+export AZURE_OPENAI_API_VERSION="2025-04-01-preview"   # optional
+export AZURE_OPENAI_MODEL="gpt-5.4"                    # optional, used by the example binary
+```
+
+The resource name is the subdomain of your Azure endpoint. In the current crate, Azure URLs are built as:
+
+```text
+https://{resource}.cognitiveservices.azure.com/openai/responses?api-version={version}
+```
+
+## Construction
+
+`Agent::quick()` does not auto-detect Azure. Use `AgentBuilder` with `LlmProvider::AzureOpenAI`:
+
+```rust
+use appam::prelude::*;
+
+let agent = AgentBuilder::new("azure-agent")
+    .provider(LlmProvider::AzureOpenAI {
+        resource_name: "my-resource".to_string(),
+        api_version: "2025-04-01-preview".to_string(),
+    })
+    .model("gpt-5.4")
+    .system_prompt("You are a helpful assistant.")
+    .build()?;
+```
+
+## Authentication
+
+Azure requests use the `api-key` header. The client resolves credentials in this order:
+
+1. `config.api_key`
+2. `AZURE_OPENAI_API_KEY`
+3. `OPENAI_API_KEY`
+
+## Reasoning
+
+Azure reuses the same OpenAI reasoning configuration used by the direct OpenAI provider:
+
+```rust
+use appam::prelude::*;
+
+let agent = AgentBuilder::new("azure-reasoning")
+    .provider(LlmProvider::AzureOpenAI {
+        resource_name: "my-resource".to_string(),
+        api_version: "2025-04-01-preview".to_string(),
+    })
+    .model("gpt-5.4")
+    .system_prompt("You are a reasoning assistant.")
+    .openai_reasoning(ReasoningConfig::high_effort())
+    .build()?;
+```
+
+## Deployment Names
+
+`.model(...)` should match the Azure deployment name you created. The example binary in this crate also reads `AZURE_OPENAI_MODEL` for that value.
+
+## Example Binary
+
+The crate includes a working Azure sample:
+
+```bash
+cargo run --example coding-agent-azure-openai
+```

@@ -1,0 +1,328 @@
+---
+title: AppConfig
+description: Root configuration struct for the Appam framework.
+---
+
+## Overview
+
+`AppConfig` is the root configuration struct for the Appam framework. It aggregates provider-specific settings, logging, session history, web server, and rate limiting configuration into a single structure that can be loaded from TOML files, environment variables, or constructed programmatically with [`AppConfigBuilder`](/docs/api-reference/app-config-builder).
+
+## AppConfig
+
+```rust
+pub struct AppConfig {
+    pub provider: LlmProvider,
+    pub openrouter: OpenRouterConfig,
+    pub anthropic: AnthropicConfig,
+    pub openai: OpenAIConfig,
+    pub openai_codex: OpenAICodexConfig,
+    pub vertex: VertexConfig,
+    pub logging: LoggingConfig,
+    pub history: HistoryConfig,
+    pub web: Option<WebConfig>,
+}
+```
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `provider` | `LlmProvider` | Active LLM provider selection (defaults to OpenRouter) |
+| `openrouter` | `OpenRouterConfig` | OpenRouter API configuration |
+| `anthropic` | `AnthropicConfig` | Anthropic Messages API configuration |
+| `openai` | `OpenAIConfig` | OpenAI Responses API configuration |
+| `openai_codex` | `OpenAICodexConfig` | OpenAI Codex subscription-backed Responses configuration |
+| `vertex` | `VertexConfig` | Google Vertex AI (Gemini) configuration |
+| `logging` | `LoggingConfig` | Logging and trace configuration |
+| `history` | `HistoryConfig` | Session history persistence settings |
+| `web` | `Option<WebConfig>` | Optional web API server configuration |
+
+All provider configuration sections are always present (with defaults) so that switching providers only requires changing the `provider` field. Appam validates that provider-specific features are not misconfigured and emits warnings for incompatibilities.
+
+## LoggingConfig
+
+```rust
+pub struct LoggingConfig {
+    pub logs_dir: PathBuf,         // default: "logs"
+    pub human_console: bool,       // default: true
+    pub level: String,             // default: "info"
+    pub log_format: LogFormat,     // default: Both
+    pub enable_logs: bool,         // default: false
+    pub enable_traces: bool,       // default: false
+    pub trace_format: TraceFormat, // default: Detailed
+}
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `logs_dir` | `"logs"` | Directory for log files and session transcripts |
+| `human_console` | `true` | Enable human-readable console output |
+| `level` | `"info"` | Log level: `trace`, `debug`, `info`, `warn`, `error` |
+| `log_format` | `Both` | Log file format: `Plain` (.log), `Json` (.jsonl), or `Both` |
+| `enable_logs` | `false` | Enable framework logs (`run-*.log`, `run-*.jsonl`). When disabled, logs go to console only. |
+| `enable_traces` | `false` | Enable agent session traces (`session-*.jsonl`, `session-*.json`). Controls conversation traces, not framework logs. |
+| `trace_format` | `Detailed` | Trace detail level: `Compact` (essentials only) or `Detailed` (full including reasoning) |
+
+### LogFormat
+
+```rust
+pub enum LogFormat {
+    Plain,  // Human-readable .log files
+    Json,   // Structured .jsonl files
+    Both,   // Both formats simultaneously
+}
+```
+
+### TraceFormat
+
+```rust
+pub enum TraceFormat {
+    Compact,   // Essential information only
+    Detailed,  // Full details including reasoning
+}
+```
+
+## HistoryConfig
+
+```rust
+pub struct HistoryConfig {
+    pub enabled: bool,              // default: false
+    pub db_path: PathBuf,           // default: "data/sessions.db"
+    pub auto_save: bool,            // default: true
+    pub max_sessions: Option<usize>, // default: None (unlimited)
+}
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `enabled` | `false` | Enable persistent session history in SQLite |
+| `db_path` | `"data/sessions.db"` | Path to the SQLite database file |
+| `auto_save` | `true` | Automatically save sessions after completion |
+| `max_sessions` | `None` | Maximum sessions to keep (None = unlimited) |
+
+## WebConfig
+
+```rust
+pub struct WebConfig {
+    pub host: String,                      // default: "0.0.0.0"
+    pub port: u16,                         // default: 3000
+    pub cors: bool,                        // default: true
+    pub rate_limit: Option<RateLimitConfig>,
+}
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `host` | `"0.0.0.0"` | Host address to bind the web server to |
+| `port` | `3000` | Port to listen on |
+| `cors` | `true` | Enable CORS headers |
+| `rate_limit` | `None` | Optional rate limiting configuration |
+
+## RateLimitConfig
+
+```rust
+pub struct RateLimitConfig {
+    pub requests_per_minute: u64,  // default: 60
+    pub burst: u32,                // default: 10
+}
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `requests_per_minute` | `60` | Maximum requests per minute per IP |
+| `burst` | `10` | Burst size for rate limiter |
+
+## Loading Configuration
+
+### From Environment Variables Only
+
+```rust
+use appam::config::load_config_from_env;
+
+let config = load_config_from_env()?;
+```
+
+Loads defaults and applies environment variable overrides. Does **not** read any config file. Use this for programmatic agent creation where you want full control.
+
+### From a TOML File
+
+```rust
+use appam::config::load_global_config;
+use std::path::Path;
+
+let config = load_global_config(Path::new("appam.toml"))?;
+```
+
+Reads the TOML file, then applies environment variable overrides on top. Environment variables always take precedence.
+
+### Configuration Hierarchy
+
+Configuration is layered with later sources overriding earlier ones:
+
+1. **Default values** -- Hardcoded defaults for all fields
+2. **TOML config file** -- Values from the loaded configuration file
+3. **Environment variables** -- Highest priority, always wins
+
+## Environment Variables
+
+### Provider Selection
+
+| Variable | Description |
+|----------|-------------|
+| `APPAM_PROVIDER` | Override provider: `anthropic`, `openrouter`, `openrouter-completions`, `openrouter-responses`, `openai`, `openai-codex`, `vertex`, `azure-openai`, `azure-anthropic`, `bedrock` |
+
+### OpenRouter
+
+| Variable | Description |
+|----------|-------------|
+| `OPENROUTER_API_KEY` | API key |
+| `OPENROUTER_MODEL` | Model identifier |
+| `OPENROUTER_BASE_URL` | API base URL |
+
+### Anthropic
+
+| Variable | Description |
+|----------|-------------|
+| `ANTHROPIC_API_KEY` | API key |
+| `ANTHROPIC_MODEL` | Model identifier |
+| `ANTHROPIC_BASE_URL` | API base URL |
+| `AZURE_ANTHROPIC_MODEL` | Azure Anthropic deployment/model override |
+| `AZURE_ANTHROPIC_BASE_URL` | Azure Anthropic base URL |
+| `AZURE_ANTHROPIC_RESOURCE` | Azure Anthropic resource name used to derive the base URL |
+| `AZURE_ANTHROPIC_AUTH_METHOD` | Azure Anthropic auth method override |
+| `AZURE_ANTHROPIC_API_KEY` | Azure Anthropic API key for `x-api-key` auth |
+| `AZURE_ANTHROPIC_AUTH_TOKEN` | Azure Anthropic bearer token |
+| `AZURE_API_KEY` | Azure Anthropic fallback credential used by the client and examples |
+
+### OpenAI / Azure OpenAI
+
+| Variable | Description |
+|----------|-------------|
+| `OPENAI_API_KEY` | OpenAI API key |
+| `OPENAI_MODEL` | OpenAI model identifier |
+| `OPENAI_BASE_URL` | OpenAI API base URL |
+| `OPENAI_ORGANIZATION` | Optional OpenAI organization header |
+| `OPENAI_PROJECT` | Optional OpenAI project header |
+| `AZURE_OPENAI_API_KEY` | Azure OpenAI API key |
+| `AZURE_OPENAI_RESOURCE` | Azure resource name |
+| `AZURE_OPENAI_API_VERSION` | Azure API version |
+| `AZURE_OPENAI_MODEL` | Azure deployment/model override |
+
+### OpenAI Codex
+
+| Variable | Description |
+|----------|-------------|
+| `OPENAI_CODEX_MODEL` | OpenAI Codex model identifier |
+| `OPENAI_CODEX_BASE_URL` | OpenAI Codex backend base URL |
+| `OPENAI_CODEX_ACCESS_TOKEN` | Explicit ChatGPT OAuth access token |
+| `OPENAI_CODEX_AUTH_FILE` | OpenAI Codex auth cache file path override |
+
+### Google Vertex
+
+| Variable | Description |
+|----------|-------------|
+| `GOOGLE_VERTEX_API_KEY` | API key for Vertex/Gemini |
+| `GOOGLE_VERTEX_ACCESS_TOKEN` | OAuth bearer token |
+| `GOOGLE_VERTEX_MODEL` | Model identifier |
+| `GOOGLE_VERTEX_LOCATION` | Vertex location (e.g., `us-central1`) |
+| `GOOGLE_VERTEX_PROJECT` | Google Cloud project ID |
+| `GOOGLE_VERTEX_BASE_URL` | API base URL |
+| `GOOGLE_VERTEX_INCLUDE_THOUGHTS` | Enable thought blocks (`true`/`false`) |
+| `GOOGLE_VERTEX_THINKING_LEVEL` | Thinking level hint: `LOW`, `MEDIUM`, `HIGH` |
+
+### Bedrock
+
+| Variable | Description |
+|----------|-------------|
+| `AWS_ACCESS_KEY_ID` | AWS access key for SigV4 auth |
+| `AWS_SECRET_ACCESS_KEY` | AWS secret key for SigV4 auth |
+| `AWS_SESSION_TOKEN` | Optional session token for SigV4 auth |
+| `AWS_REGION` | Bedrock region |
+| `AWS_DEFAULT_REGION` | Fallback Bedrock region |
+| `AWS_BEDROCK_MODEL_ID` | Bedrock model identifier override |
+| `AWS_BEARER_TOKEN_BEDROCK` | Bearer-token auth for non-streaming Bedrock requests |
+
+### Logging
+
+| Variable | Description |
+|----------|-------------|
+| `APPAM_LOG_LEVEL` | Logging level (`trace`, `debug`, `info`, `warn`, `error`) |
+| `APPAM_LOGS_DIR` | Logs directory path |
+| `APPAM_LOG_FORMAT` | Log format (`plain`, `json`, `both`) |
+| `APPAM_TRACE_FORMAT` | Trace format (`compact`, `detailed`) |
+| `APPAM_ENABLE_LOGS` | Enable framework logs (`true`/`false`) |
+| `APPAM_ENABLE_TRACES` | Enable session traces (`true`/`false`) |
+
+### History
+
+| Variable | Description |
+|----------|-------------|
+| `APPAM_HISTORY_ENABLED` | Enable session history (`true`/`false`) |
+| `APPAM_HISTORY_DB_PATH` | Database file path |
+
+## TOML Example
+
+```toml
+provider = "anthropic"
+
+[anthropic]
+model = "claude-sonnet-4-5"
+max_tokens = 8192
+
+[openrouter]
+model = "openai/gpt-5"
+max_output_tokens = 9000
+
+[openai]
+model = "gpt-4o"
+max_output_tokens = 4096
+
+[openai_codex]
+model = "gpt-5.4"
+
+[vertex]
+model = "gemini-2.5-flash"
+location = "us-central1"
+
+[logging]
+level = "info"
+logs_dir = "logs"
+log_format = "both"
+enable_logs = false
+enable_traces = true
+trace_format = "detailed"
+
+[history]
+enabled = true
+db_path = "data/sessions.db"
+auto_save = true
+max_sessions = 500
+
+[web]
+host = "0.0.0.0"
+port = 3000
+cors = true
+
+[web.rate_limit]
+requests_per_minute = 60
+burst = 10
+```
+
+## Provider Feature Validation
+
+Appam validates configuration at load time and emits warnings when provider-specific features are configured for the wrong provider. For example:
+
+- Anthropic `thinking` configuration with an OpenRouter provider triggers a warning suggesting OpenRouter's `reasoning` configuration instead
+- OpenRouter `reasoning` configuration with an Anthropic provider triggers a warning suggesting Anthropic's `thinking` configuration
+- Anthropic `caching` with OpenAI provider warns about the difference in caching mechanisms
+
+These are warnings, not errors -- the configuration still loads successfully but the incompatible settings will be ignored at runtime.
+
+## See Also
+
+- [`AppConfigBuilder`](/docs/api-reference/app-config-builder) -- Fluent builder for constructing AppConfig programmatically
+- [`AnthropicConfig`](/docs/api-reference/anthropic-config) -- Anthropic-specific provider settings
+- [`OpenAIConfig`](/docs/api-reference/openai-config) -- OpenAI-specific provider settings
+- [`OpenAICodexConfig`](/docs/api-reference/openai-codex-config) -- OpenAI Codex-specific provider settings
+- [`OpenRouterConfig`](/docs/api-reference/openrouter-config) -- OpenRouter-specific provider settings
+- [`VertexConfig`](/docs/api-reference/vertex-config) -- Google Vertex-specific provider settings

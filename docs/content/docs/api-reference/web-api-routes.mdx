@@ -1,0 +1,261 @@
+---
+title: Web API Routes
+description: HTTP endpoints for serving agents as a web service.
+---
+
+## Overview
+
+Appam includes a built-in web server powered by [Axum](https://github.com/tokio-rs/axum) that exposes agents, sessions, and chat functionality as RESTful HTTP endpoints. Routes are organized into three groups, each returned as an Axum `Router`:
+
+```rust
+pub fn agent_routes() -> Router<AppState>
+pub fn session_routes() -> Router<AppState>
+pub fn chat_routes() -> Router<AppState>
+```
+
+**Import path:** `appam::web::routes`
+
+## Agent Routes
+
+Manage agent registration, configuration, tools, and lifecycle.
+
+### Core CRUD
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/agents` | List all registered agents |
+| POST | `/api/agents` | Create a new agent |
+| GET | `/api/agents/:name` | Get agent details by name |
+| PUT | `/api/agents/:name` | Update an existing agent |
+| DELETE | `/api/agents/:name` | Delete an agent and its directory |
+
+### Configuration & Prompts
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/agents/:name/config` | Get full agent configuration (TOML, parsed config, prompt, tools) |
+| GET | `/api/agents/:name/prompt` | Get the agent's system prompt text |
+| PUT | `/api/agents/:name/prompt` | Update the agent's system prompt |
+
+### Agent Operations
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/agents/:name/reload` | Hot-reload agent configuration from disk |
+| POST | `/api/agents/:name/duplicate` | Duplicate an agent with a new name |
+
+### Tool Management
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/agents/:name/tools/:tool_name` | Get tool details (schema, implementation, code) |
+| POST | `/api/agents/:name/tools` | Create a new tool for an agent |
+| PUT | `/api/agents/:name/tools/:tool_name` | Update an existing tool |
+| DELETE | `/api/agents/:name/tools/:tool_name` | Delete a tool from an agent |
+
+### Statistics
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/stats` | Get application statistics (agent count, session count) |
+
+## Session Routes
+
+Manage conversation sessions.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/sessions` | List all sessions |
+| GET | `/api/sessions/:session_id` | Get session by ID with full message history |
+| DELETE | `/api/sessions/:session_id` | Delete a session |
+| GET | `/api/agents/:name/sessions` | List sessions for a specific agent |
+
+## Chat Routes
+
+Send messages and receive streamed responses.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/agents/:name/chat` | Start a new chat session with an agent |
+| POST | `/api/sessions/:session_id/chat` | Continue an existing session |
+
+Both chat endpoints stream responses as **Server-Sent Events (SSE)**. The SSE stream emits `StreamEvent` variants serialized as JSON, enabling real-time display in web clients.
+
+## Request/Response Types
+
+### ChatRequest
+
+```json
+{
+  "message": "What is the capital of France?"
+}
+```
+
+### CreateAgentRequest
+
+```json
+{
+  "name": "my-agent",
+  "model": "anthropic/claude-sonnet-4-5",
+  "description": "A helpful assistant",
+  "version": "1.0.0",
+  "system_prompt": "You are a helpful assistant."
+}
+```
+
+Only `name` and `system_prompt` are required. `model`, `description`, and `version` are optional.
+
+### UpdateAgentRequest
+
+```json
+{
+  "model": "anthropic/claude-haiku-4",
+  "description": "Updated description",
+  "version": "1.1.0"
+}
+```
+
+All fields are optional -- only provided fields are updated.
+
+### DuplicateAgentRequest
+
+```json
+{
+  "new_name": "my-agent-copy"
+}
+```
+
+### CreateToolRequest
+
+```json
+{
+  "name": "my_tool",
+  "schema_json": "{\"type\": \"object\", \"properties\": {\"input\": {\"type\": \"string\"}}}",
+  "python_code": "def run(input: str) -> str:\n    return input.upper()"
+}
+```
+
+### UpdateToolRequest
+
+```json
+{
+  "schema_json": "{...}",
+  "python_code": "..."
+}
+```
+
+Both fields are optional -- only provided fields are updated.
+
+### AgentInfo (Response)
+
+```json
+{
+  "name": "my-agent",
+  "model": "anthropic/claude-sonnet-4-5",
+  "description": "A helpful assistant",
+  "version": "1.0.0",
+  "tool_count": 3,
+  "tools": ["read_file", "write_file", "search"]
+}
+```
+
+### StateStats (Response)
+
+```json
+{
+  "agent_count": 5,
+  "session_count": 12
+}
+```
+
+## SSE Streaming Format
+
+Chat endpoints return an SSE stream where each event is a `StreamEvent` serialized as JSON:
+
+```
+data: {"type": "session_started", "session_id": "abc-123"}
+
+data: {"type": "content", "content": "The capital"}
+
+data: {"type": "content", "content": " of France is Paris."}
+
+data: {"type": "usage_update", "snapshot": {"total_input_tokens": 25, "total_output_tokens": 8, ...}}
+
+data: {"type": "turn_completed"}
+
+data: {"type": "done"}
+```
+
+See [StreamEvent](/docs/api-reference/stream-event) for the full list of event types and their fields.
+
+## AppState
+
+The shared application state passed to all route handlers. Contains loaded agents, session storage, and the agents directory path.
+
+```rust
+#[derive(Clone)]
+pub struct AppState {
+    agents: Arc<RwLock<HashMap<String, Arc<TomlAgent>>>>,
+    pub sessions: SessionStore,
+    agents_dir: PathBuf,
+}
+```
+
+### Key Methods
+
+| Method | Description |
+|--------|-------------|
+| `new(agents_dir)` | Load agents from directory and initialize SQLite session store |
+| `get_agent(name)` | Get an agent by name |
+| `list_agents()` | List all loaded agent names |
+| `get_agent_info(name)` | Get agent metadata for API responses |
+| `reload_agents()` | Hot-reload all agents from disk |
+| `reload_single_agent(name)` | Hot-reload a specific agent |
+| `stats()` | Get application statistics |
+
+## WebConfig
+
+Configuration for the web server, defined in the application config.
+
+```rust
+pub struct WebConfig {
+    pub host: String,      // Default: "0.0.0.0"
+    pub port: u16,         // Default: 3000
+    pub cors: bool,        // Default: true
+    pub rate_limit: Option<RateLimitConfig>,
+}
+```
+
+Configure via TOML:
+
+```toml
+[web]
+host = "127.0.0.1"
+port = 8080
+cors = true
+
+[web.rate_limit]
+requests_per_minute = 60
+```
+
+## Error Handling
+
+All API errors return JSON with an `error` field and appropriate HTTP status codes:
+
+| Status | Type | Description |
+|--------|------|-------------|
+| 404 | `NotFound` | Agent, session, or tool not found |
+| 400 | `BadRequest` | Invalid agent/tool name or duplicate resource |
+| 500 | `Internal` | Server-side errors (config read failures, reload errors) |
+
+```json
+{
+  "error": "Agent not found: nonexistent-agent"
+}
+```
+
+## Source
+
+- Routes are defined in [`src/web/routes.rs`](https://github.com/winfunc/appam/blob/main/src/web/routes.rs).
+- Application state is defined in [`src/web/state.rs`](https://github.com/winfunc/appam/blob/main/src/web/state.rs).
+- Web configuration is defined in [`src/config/mod.rs`](https://github.com/winfunc/appam/blob/main/src/config/mod.rs).

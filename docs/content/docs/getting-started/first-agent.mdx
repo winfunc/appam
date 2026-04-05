@@ -1,0 +1,177 @@
+---
+title: Your First Agent with Tools
+description: Build an agent with custom tools using the AgentBuilder and tool macros.
+---
+
+Tools give your agent the ability to take actions -- read files, call APIs, run calculations, or anything else you can express in Rust. This guide walks through defining a tool, registering it with an agent, and letting the LLM call it autonomously.
+
+## Define a Tool Input Schema
+
+Tool inputs are plain Rust structs annotated with `#[derive(Deserialize, Schema)]`. The `Schema` derive macro generates a JSON Schema that the LLM uses to understand what arguments the tool expects. Use the `#[description = "..."]` attribute to describe each field:
+
+```rust
+use appam::prelude::*;
+
+#[derive(Deserialize, Schema)]
+struct AddInput {
+    #[description = "First number"]
+    a: f64,
+    #[description = "Second number"]
+    b: f64,
+}
+```
+
+Supported field types include `String`, `f64`, `i64`, `u32`, `bool`, `Vec<T>`, and nested structs that also derive `Schema`.
+
+## Implement the Tool
+
+The `#[tool]` attribute macro turns a function declaration into a full `Tool` implementation. For struct-based input, the function takes your input struct as its only argument and returns a `Result`:
+
+```rust
+#[derive(Serialize)]
+struct AddOutput {
+    sum: f64,
+}
+
+#[tool(description = "Add two numbers together")]
+fn add(input: AddInput) -> Result<AddOutput> {
+    Ok(AddOutput {
+        sum: input.a + input.b,
+    })
+}
+```
+
+The macro generates a struct named `Add` (the function name converted to PascalCase) that implements the `Tool` trait. It also generates a zero-argument constructor function `add()` that returns an instance of `Add`.
+
+### What the Macro Generates
+
+For the `add` function above, the `#[tool]` macro produces roughly:
+
+- A struct `Add` that implements `appam::tools::Tool`.
+- `Add::name()` returns `"add"`.
+- `Add::spec()` returns a `ToolSpec` with the JSON Schema derived from `AddInput`.
+- `Add::execute()` deserializes the JSON arguments into `AddInput`, calls your function body, and wraps the result.
+- A factory function `add() -> Add` for convenient instantiation.
+
+You can override the tool name with `#[tool(name = "calculator_add", description = "...")]`.
+
+## Build the Agent
+
+Use `AgentBuilder` for full control over agent configuration. Register tools with `.with_tool()`:
+
+```rust
+use appam::prelude::*;
+
+#[derive(Deserialize, Schema)]
+struct AddInput {
+    #[description = "First number"]
+    a: f64,
+    #[description = "Second number"]
+    b: f64,
+}
+
+#[derive(Serialize)]
+struct AddOutput {
+    sum: f64,
+}
+
+#[tool(description = "Add two numbers together")]
+fn add(input: AddInput) -> Result<AddOutput> {
+    Ok(AddOutput {
+        sum: input.a + input.b,
+    })
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let agent = AgentBuilder::new("calculator")
+        .provider(LlmProvider::Anthropic)
+        .model("claude-sonnet-4-5")
+        .system_prompt("You are a calculator assistant. Use the add tool to perform additions.")
+        .with_tool(Arc::new(add()))
+        .build()?;
+
+    agent
+        .stream("What is 42 + 58?")
+        .on_content(|text| print!("{}", text))
+        .on_tool_call(|name, _args| println!("\n[Calling tool: {}]", name))
+        .on_tool_result(|name, result| println!("[Tool {} returned: {}]", name, result))
+        .run()
+        .await?;
+
+    println!();
+    Ok(())
+}
+```
+
+The agent will reason about the user's question, decide to call `add` with `{"a": 42, "b": 58}`, receive the result, and then respond with the answer.
+
+## The Agentic Loop
+
+When you call `.stream().run()`, Appam runs a loop:
+
+1. Send the conversation (system prompt + user message) to the LLM.
+2. The LLM streams back text and/or tool calls.
+3. If the LLM requests a tool call, Appam executes the tool and appends the result to the conversation.
+4. Steps 1-3 repeat until the LLM responds with only text (no more tool calls).
+5. The session completes and a `Session` object is returned.
+
+This loop is fully automatic. Tool execution is synchronous from the runtime's perspective, and results are fed back to the LLM without any manual intervention.
+
+## Inline Tool Definitions
+
+For tools with simple parameters, you can skip the input struct entirely and annotate parameters directly with `#[arg]`:
+
+```rust
+#[tool(description = "Multiply two numbers")]
+fn multiply(
+    #[arg(description = "First number")] a: f64,
+    #[arg(description = "Second number")] b: f64,
+) -> Result<f64> {
+    Ok(a * b)
+}
+```
+
+This generates the same `Tool` implementation. The JSON Schema is built from the parameter types and `#[arg]` attributes.
+
+## Adding Tools Without `Arc::new()`
+
+The `AgentBuilderToolExt` trait, re-exported by `appam::prelude::*`, provides a `.tool()` method that wraps the tool in `Arc` for you:
+
+```rust
+use appam::prelude::*;
+
+let agent = AgentBuilder::new("calculator")
+    .provider(LlmProvider::Anthropic)
+    .model("claude-sonnet-4-5")
+    .system_prompt("You are a calculator.")
+    .tool(add())       // No Arc::new() needed
+    .tool(multiply())
+    .build()?;
+```
+
+Both `.with_tool(Arc::new(add()))` and `.tool(add())` are equivalent. If you already have a `Vec<Arc<dyn Tool>>`, use `.with_tools(...)` or `.tools(...)` instead.
+
+## Multiple Tools
+
+Agents can have any number of tools. The LLM chooses which tool to call based on the user's request and the tool descriptions:
+
+```rust
+let agent = AgentBuilder::new("coding-assistant")
+    .provider(LlmProvider::Anthropic)
+    .model("claude-sonnet-4-5")
+    .system_prompt("You are a coding assistant with file and shell access.")
+    .with_tool(Arc::new(read_file()))
+    .with_tool(Arc::new(write_file()))
+    .with_tool(Arc::new(bash()))
+    .with_tool(Arc::new(list_files()))
+    .build()?;
+```
+
+The LLM may chain multiple tool calls in a single turn or across turns to accomplish complex tasks.
+
+## Next Steps
+
+- [Core Concepts: Agents](/docs/core-concepts/agents) -- Understand sessions, continuations, and the `Agent` trait in depth.
+- [Core Concepts: Tools](/docs/core-concepts/tools) -- Tool registries, closure tools, and Python tool implementations.
+- [Examples](/docs/examples/coding-agent-anthropic) -- Full working example of a coding agent with file and shell tools.

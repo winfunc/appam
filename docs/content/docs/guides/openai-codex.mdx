@@ -1,0 +1,80 @@
+---
+title: OpenAI Codex Provider
+description: Use ChatGPT subscription-backed Codex models through Appam's dedicated OpenAI Codex provider.
+---
+
+## Setup
+
+Appam's Codex provider uses ChatGPT OAuth credentials against the Codex backend.
+You can either provide a bearer token explicitly or let Appam read and refresh
+credentials from its local auth cache.
+
+```bash
+export OPENAI_CODEX_MODEL="gpt-5.4"                    # optional
+export OPENAI_CODEX_ACCESS_TOKEN="eyJ..."              # optional explicit token
+export OPENAI_CODEX_AUTH_FILE="$HOME/.appam/auth.json" # optional auth cache override
+```
+
+If `OPENAI_CODEX_ACCESS_TOKEN` is unset, Appam looks for an `openai-codex`
+OAuth entry in `OPENAI_CODEX_AUTH_FILE` and refreshes it before expiry.
+
+## Construction
+
+`Agent::quick()` auto-detects the provider from `openai-codex/...` model strings:
+
+```rust
+use appam::prelude::*;
+
+let agent = Agent::quick(
+    "openai-codex/gpt-5.4",
+    "You are a helpful coding assistant.",
+    vec![],
+)?;
+```
+
+For explicit configuration, use `LlmProvider::OpenAICodex`:
+
+```rust
+use appam::prelude::*;
+
+let agent = AgentBuilder::new("codex-agent")
+    .provider(LlmProvider::OpenAICodex)
+    .model("gpt-5.4")
+    .system_prompt("You are a helpful coding assistant.")
+    .build()?;
+```
+
+## Authentication
+
+The Codex provider resolves auth in this order:
+
+1. `OpenAICodexConfig.access_token`
+2. `OPENAI_CODEX_ACCESS_TOKEN`
+3. cached OAuth credentials in `OPENAI_CODEX_AUTH_FILE`
+
+For trusted local CLI workflows, use the example binary to trigger the browser
+login flow and persist credentials to `~/.appam/auth.json`.
+
+## Reasoning
+
+The provider reuses Appam's OpenAI reasoning and text verbosity controls:
+
+```rust
+use appam::prelude::*;
+
+let agent = AgentBuilder::new("codex-reasoning")
+    .provider(LlmProvider::OpenAICodex)
+    .model("gpt-5.4")
+    .system_prompt("You are a reasoning assistant.")
+    .openai_reasoning(ReasoningConfig::high_effort())
+    .build()?;
+```
+
+## Example Binary
+
+```bash
+cargo run --example coding-agent-openai-codex
+```
+
+The example will try cached auth first and fall back to an interactive ChatGPT
+login flow only when no usable Codex credential is available.

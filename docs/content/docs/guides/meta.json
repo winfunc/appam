@@ -1,0 +1,22 @@
+{
+  "title": "Guides",
+  "pages": [
+    "anthropic",
+    "openai",
+    "openai-codex",
+    "openrouter",
+    "vertex",
+    "azure-openai",
+    "azure-anthropic",
+    "bedrock",
+    "tool-creation",
+    "tool-macro",
+    "schema-macro",
+    "streaming-guide",
+    "session-persistence",
+    "toml-configuration",
+    "web-api",
+    "environment-variables",
+    "agent-skill"
+  ]
+}

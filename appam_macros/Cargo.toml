@@ -1,0 +1,21 @@
+[package]
+name = "appam_macros"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+authors = ["Winfunc Research"]
+description = "Procedural macros for the high-throughput Appam Rust agent framework"
+license = "MIT"
+repository = "https://github.com/winfunc/appam"
+homepage = "https://github.com/winfunc/appam"
+documentation = "https://docs.rs/appam_macros"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2.0", features = ["full", "extra-traits"] }
+quote = "1.0"
+proc-macro2 = "1.0"
+serde_json = "1.0"
+schemars = "0.8.22"

@@ -1,0 +1,79 @@
+---
+title: OpenAIConfig
+description: Configuration struct for the OpenAI Responses client, including Azure-specific routing.
+---
+
+`OpenAIConfig` is the config used by `OpenAIClient::new(...)` and stored in [`AppConfig`](/docs/api-reference/app-config).
+
+## Definition
+
+```rust
+pub struct OpenAIConfig {
+    pub api_key: Option<String>,
+    pub base_url: String,
+    pub organization: Option<String>,
+    pub project: Option<String>,
+    pub model: String,
+    pub pricing_model: Option<String>,
+    pub max_output_tokens: Option<i32>,
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub stream: bool,
+    pub reasoning: Option<ReasoningConfig>,
+    pub text_format: Option<TextFormatConfig>,
+    pub text_verbosity: Option<TextVerbosity>,
+    pub service_tier: Option<ServiceTier>,
+    pub conversation: Option<ConversationConfig>,
+    pub retry: Option<RetryConfig>,
+    pub store: Option<bool>,
+    pub background: Option<bool>,
+    pub metadata: Option<HashMap<String, String>>,
+    pub prompt_cache_key: Option<String>,
+    pub safety_identifier: Option<String>,
+    pub top_logprobs: Option<i32>,
+    pub azure: Option<AzureConfig>,
+}
+```
+
+## Defaults from the current code
+
+- `base_url = "https://api.openai.com/v1"`
+- `model = "gpt-5.4"`
+- `stream = true`
+
+Other fields are optional and default to `None` unless documented otherwise in the type's own `Default` implementation.
+
+## Validation behavior
+
+`validate()` currently enforces:
+
+- `temperature` in `0.0..=2.0`
+- `top_p` in `0.0..=1.0`
+- `top_logprobs` in `0..=20`
+- `service_tier = Scale` is rejected for direct OpenAI requests
+- reasoning/sampling compatibility is checked against the normalized model
+
+## Azure support
+
+```rust
+pub struct AzureConfig {
+    pub resource_name: String,
+    pub api_version: String,
+}
+```
+
+When `azure` is present, Appam routes through Azure OpenAI using the OpenAI client with Azure URL construction and `api-key` authentication semantics.
+
+## Builder hooks
+
+`AgentBuilder` exposes the current OpenAI-specific overrides:
+
+```rust
+.openai_api_key(...)
+.openai_reasoning(...)
+.openai_text_verbosity(...)
+.openai_service_tier(...)
+.openai_pricing_model(...)
+```
+
+The `openai_reasoning`, `openai_text_verbosity`, and `openai_pricing_model` hooks also flow into the OpenAI Codex runtime config when that provider is selected.

@@ -1,0 +1,131 @@
+---
+title: AppConfigBuilder
+description: Fluent builder for constructing AppConfig programmatically.
+---
+
+## Overview
+
+`AppConfigBuilder` provides a fluent API for constructing [`AppConfig`](/docs/api-reference/app-config) programmatically in Rust code, without requiring a TOML file. All fields are optional -- unset fields use their defaults.
+
+## Constructor
+
+### `AppConfigBuilder::new() -> Self`
+
+Creates a new builder with all fields unset (defaults will apply on `.build()`).
+
+```rust
+use appam::config::AppConfigBuilder;
+
+let builder = AppConfigBuilder::new();
+```
+
+## Builder Methods
+
+All methods consume and return `Self`, enabling method chaining.
+
+### OpenRouter Settings
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `openrouter_api_key` | `.openrouter_api_key(impl Into<String>) -> Self` | Set the OpenRouter API key |
+| `openrouter_base_url` | `.openrouter_base_url(impl Into<String>) -> Self` | Set the OpenRouter base URL |
+| `model` | `.model(impl Into<String>) -> Self` | Set the default LLM model |
+
+### Logging Settings
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `logs_dir` | `.logs_dir(impl Into<PathBuf>) -> Self` | Set the logs directory |
+| `log_level` | `.log_level(impl Into<String>) -> Self` | Set log level (`trace`, `debug`, `info`, `warn`, `error`) |
+| `human_console` | `.human_console(bool) -> Self` | Enable/disable human-readable console output |
+| `log_format` | `.log_format(LogFormat) -> Self` | Set log file format (Plain, Json, Both) |
+| `enable_logs` | `.enable_logs(bool) -> Self` | Enable/disable framework logs (`run-*.log`, `run-*.jsonl`) |
+| `enable_traces` | `.enable_traces(bool) -> Self` | Enable/disable agent session traces (`session-*.jsonl`) |
+| `trace_format` | `.trace_format(TraceFormat) -> Self` | Set trace detail level (Compact, Detailed) |
+
+### History Settings
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `enable_history` | `.enable_history(impl Into<PathBuf>) -> Self` | Enable session history with the given database path |
+| `history_auto_save` | `.history_auto_save(bool) -> Self` | Enable/disable automatic session saving |
+| `history_max_sessions` | `.history_max_sessions(usize) -> Self` | Set maximum sessions to keep |
+
+### Web Server Settings
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `web_host` | `.web_host(impl Into<String>) -> Self` | Set the web server host address |
+| `web_port` | `.web_port(u16) -> Self` | Set the web server port |
+| `web_cors` | `.web_cors(bool) -> Self` | Enable/disable CORS |
+| `rate_limit_rpm` | `.rate_limit_rpm(u64) -> Self` | Set rate limit requests per minute |
+| `rate_limit_burst` | `.rate_limit_burst(u32) -> Self` | Set rate limit burst size |
+
+## Build
+
+### `.build() -> AppConfig`
+
+Consumes the builder and produces an `AppConfig`. Unset fields use their defaults. This method is infallible -- it always returns a valid configuration.
+
+The resulting `AppConfig` uses the default `LlmProvider` and default provider configurations for OpenRouter, Anthropic, OpenAI, OpenAI Codex, and Vertex. To customize those providers, use TOML files or environment variables.
+
+## Examples
+
+### Minimal Configuration
+
+```rust
+use appam::config::AppConfigBuilder;
+
+let config = AppConfigBuilder::new()
+    .openrouter_api_key("sk-or-v1-...")
+    .model("anthropic/claude-sonnet-4-5")
+    .build();
+```
+
+### Full Configuration
+
+```rust
+use appam::config::AppConfigBuilder;
+
+let config = AppConfigBuilder::new()
+    .openrouter_api_key("sk-or-v1-...")
+    .model("openai/gpt-5")
+    .logs_dir("./logs")
+    .log_level("info")
+    .human_console(true)
+    .enable_logs(true)
+    .enable_traces(true)
+    .enable_history("./data/sessions.db")
+    .history_auto_save(true)
+    .history_max_sessions(100)
+    .web_host("0.0.0.0")
+    .web_port(8080)
+    .web_cors(true)
+    .rate_limit_rpm(60)
+    .rate_limit_burst(10)
+    .build();
+```
+
+### Web Server Only
+
+When any web-related method is called, a `WebConfig` is included in the output. If no web methods are called, `config.web` is `None`.
+
+```rust
+use appam::config::AppConfigBuilder;
+
+let config = AppConfigBuilder::new()
+    .web_host("127.0.0.1")
+    .web_port(8080)
+    .web_cors(false)
+    .rate_limit_rpm(120)
+    .rate_limit_burst(20)
+    .build();
+
+assert!(config.web.is_some());
+```
+
+## See Also
+
+- [`AppConfig`](/docs/api-reference/app-config) -- The configuration struct produced by this builder
+- [`AgentConfigBuilder`](/docs/api-reference/agent-config-builder) -- Builder for agent-specific TOML configuration
+- [`AgentBuilder`](/docs/api-reference/agent-builder) -- Builder for constructing agent instances directly

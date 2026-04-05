@@ -1,0 +1,92 @@
+---
+title: The Schema Macro
+description: Derive JSON Schema from Rust types for tool specs.
+---
+
+`#[derive(Schema)]` generates a `schemars::JsonSchema` implementation for your Rust type. Appam uses that schema when building tool specs so the model can see the expected shape of tool arguments.
+
+It does not add standalone JSON Schema validation at runtime by itself; runtime behavior still comes from normal deserialization in the generated tool code.
+
+## Basic Usage
+
+```rust
+use appam::prelude::*;
+
+#[derive(Deserialize, Schema)]
+struct SearchInput {
+    #[description = "The search query string"]
+    query: String,
+
+    #[description = "Maximum number of results to return"]
+    max_results: u64,
+
+    #[description = "Include archived items in the results"]
+    include_archived: bool,
+}
+```
+
+## `#[description = ...]`
+
+Use `#[description = "..."]` on fields to populate the schema's `description` field:
+
+```rust
+#[derive(Deserialize, Schema)]
+struct FileInput {
+    #[description = "Absolute or relative path to the file"]
+    path: String,
+
+    #[description = "Whether to create parent directories if they do not exist"]
+    create_dirs: bool,
+}
+```
+
+## Supported Shapes
+
+The derive delegates to `schemars`, so the usual `JsonSchema`-compatible types work well:
+
+- strings
+- booleans
+- integers and floats
+- `Option<T>`
+- `Vec<T>`
+- nested structs
+- enums
+
+## Optional Fields
+
+`Option<T>` fields are omitted from the generated `"required"` set:
+
+```rust
+#[derive(Deserialize, Schema)]
+struct QueryInput {
+    #[description = "The search query"]
+    query: String,
+
+    #[description = "Maximum number of results"]
+    max_results: Option<u64>,
+}
+```
+
+## Pairing with `#[tool]`
+
+This derive is most useful when a tool takes a single structured input:
+
+```rust
+use appam::prelude::*;
+
+#[derive(Deserialize, Schema)]
+struct GrepInput {
+    #[description = "Regex pattern to search for"]
+    pattern: String,
+
+    #[description = "File path to search"]
+    path: String,
+}
+
+#[tool(description = "Search for a regex inside a file")]
+fn grep(input: GrepInput) -> Result<String> {
+    Ok(format!("searching {} in {}", input.pattern, input.path))
+}
+```
+
+In that shape, the generated tool implementation uses the struct's schema when producing `ToolSpec::parameters`.

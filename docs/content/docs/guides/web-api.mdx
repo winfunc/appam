@@ -1,0 +1,114 @@
+---
+title: Web API
+description: Serve TOML agents over HTTP with Axum and SSE.
+---
+
+Appam ships an Axum server in `appam::web` with routes for agents, sessions, streaming chat, and trace viewing.
+
+## Start the Server
+
+### CLI
+
+```bash
+appam serve --agents-dir agents --host 0.0.0.0 --port 3000
+```
+
+### Library
+
+```rust
+use appam::web;
+use std::path::PathBuf;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    web::serve("0.0.0.0".to_string(), 3000, PathBuf::from("agents")).await
+}
+```
+
+## Route Surface
+
+### Agents
+
+- `GET /api/agents`
+- `POST /api/agents`
+- `GET /api/agents/:name`
+- `PUT /api/agents/:name`
+- `DELETE /api/agents/:name`
+- `GET /api/agents/:name/config`
+- `POST /api/agents/:name/duplicate`
+- `POST /api/agents/:name/reload`
+- `GET /api/agents/:name/prompt`
+- `PUT /api/agents/:name/prompt`
+- `POST /api/agents/:name/tools`
+- `GET /api/agents/:name/tools/:tool_name`
+- `PUT /api/agents/:name/tools/:tool_name`
+- `DELETE /api/agents/:name/tools/:tool_name`
+- `GET /api/stats`
+
+### Sessions
+
+- `GET /api/sessions`
+- `GET /api/sessions/:session_id`
+- `DELETE /api/sessions/:session_id`
+- `GET /api/agents/:name/sessions`
+
+### Chat
+
+- `POST /api/agents/:name/chat`
+- `POST /api/sessions/:session_id/chat`
+
+Both chat endpoints accept:
+
+```json
+{ "message": "Hello" }
+```
+
+## SSE Format
+
+The server serializes `StreamEvent` values directly into the SSE `data:` field. It does not set a custom SSE event name; the event type is embedded in the JSON payload:
+
+```text
+data: {"type":"session_started","session_id":"abc123"}
+data: {"type":"content","content":"I can help with that."}
+data: {"type":"tool_call_started","tool_name":"search","arguments":"{\"query\":\"...\"}"}
+data: {"type":"done"}
+```
+
+## Error Responses
+
+Errors are JSON:
+
+```json
+{ "error": "Agent not found: missing-agent" }
+```
+
+Current status codes are:
+
+- `400` for bad requests
+- `404` for missing resources
+- `500` for internal failures
+
+## Current Configuration Reality
+
+The config structs include `web` and `web.rate_limit` sections, but `web::serve(...)` currently:
+
+- takes `host`, `port`, and `agents_dir` directly as function arguments
+- always enables permissive CORS
+- applies a fixed governor limit of roughly 1 request per second per IP with a burst of 60
+
+So the documented `WebConfig` and `AppConfigBuilder` fields exist, but the built-in server helper does not yet consume them.
+
+## Trace Visualizer
+
+There is also a dedicated trace UI server:
+
+```rust
+use appam::web;
+use std::path::PathBuf;
+
+web::serve_tracing(
+    "127.0.0.1".to_string(),
+    8080,
+    PathBuf::from("logs"),
+).await?;
+```

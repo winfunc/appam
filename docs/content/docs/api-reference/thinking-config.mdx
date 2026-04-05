@@ -1,0 +1,141 @@
+---
+title: ThinkingConfig
+description: Configuration for extended thinking / reasoning in supported models.
+---
+
+`ThinkingConfig` controls extended thinking behavior for Claude-family models,
+enabling them to show internal reasoning before generating a final answer. It
+belongs to the Anthropic config surface and is also used when Anthropic Claude
+is accessed through Bedrock.
+
+## Struct Definition
+
+```rust
+pub struct ThinkingConfig {
+    pub enabled: bool,
+    pub budget_tokens: u32,
+    pub adaptive: bool,
+}
+```
+
+## Fields
+
+### `enabled`
+
+Enable extended thinking in legacy mode with a fixed token budget. Ignored when `adaptive` is `true`.
+
+### `budget_tokens`
+
+Maximum tokens for reasoning. Only used when `adaptive` is `false` and `enabled` is `true`.
+
+- Minimum: `1024`
+- Must be less than `max_tokens`
+
+Deprecated for Claude Opus 4.6+; use adaptive thinking instead.
+
+### `adaptive`
+
+Enable adaptive thinking for Claude Opus 4.6 and newer. When `true`, Claude dynamically decides when and how much to think based on request complexity. Automatically enables interleaved thinking (Claude can think between tool calls). Control thinking depth with `EffortLevel` instead of `budget_tokens`.
+
+Defaults to `false` for backward compatibility.
+
+## Constructors
+
+### `ThinkingConfig::adaptive()`
+
+```rust
+pub fn adaptive() -> Self;
+```
+
+Create an adaptive thinking config for Opus 4.6+. Adaptive thinking lets Claude dynamically decide when and how much to think. Pair with `EffortLevel` to control thinking depth.
+
+```rust
+use appam::llm::anthropic::ThinkingConfig;
+
+let thinking = ThinkingConfig::adaptive();
+// enabled: false, budget_tokens: 0, adaptive: true
+```
+
+### `ThinkingConfig::enabled(budget_tokens)`
+
+```rust
+pub fn enabled(budget_tokens: u32) -> Self;
+```
+
+Create an enabled thinking config with the specified budget. Use for models before Opus 4.6 (Opus 4.5, Sonnet 4.5, etc.).
+
+```rust
+use appam::llm::anthropic::ThinkingConfig;
+
+let thinking = ThinkingConfig::enabled(16000);
+// enabled: true, budget_tokens: 16000, adaptive: false
+```
+
+### `ThinkingConfig::disabled()`
+
+```rust
+pub fn disabled() -> Self;
+```
+
+Create a disabled thinking config.
+
+```rust
+use appam::llm::anthropic::ThinkingConfig;
+
+let thinking = ThinkingConfig::disabled();
+// enabled: false, budget_tokens: 0, adaptive: false
+```
+
+## Model Differences
+
+| Model | Recommended Approach |
+|-------|---------------------|
+| Claude Opus 4.6 | `ThinkingConfig::adaptive()` with `EffortLevel` |
+| Claude Opus 4.5, Sonnet 4.5 | `ThinkingConfig::enabled(budget_tokens)` |
+| Claude 3.7 Sonnet | `ThinkingConfig::enabled(budget_tokens)` |
+
+## Provider Support
+
+- **Anthropic**: Native extended thinking support. Thinking content streamed as `StreamEvent::Reasoning(text)`.
+- **Bedrock**: Supported through the Anthropic Messages API (same as direct Anthropic).
+
+## Incompatibilities
+
+Extended thinking cannot be used with:
+
+- `temperature` parameter
+- `top_k` parameter
+- Forced tool use (`tool_choice: Any` or `tool_choice: Tool`)
+
+## Builder Usage
+
+```rust
+use appam::prelude::*;
+use appam::llm::anthropic::ThinkingConfig;
+
+// Adaptive thinking for Opus 4.6+
+let agent = AgentBuilder::new("thinker")
+    .model("claude-opus-4-6")
+    .thinking(ThinkingConfig::adaptive())
+    .system_prompt("Reason carefully before answering.")
+    .build()?;
+
+// Fixed-budget thinking for older models
+let agent = AgentBuilder::new("thinker")
+    .model("claude-sonnet-4-5")
+    .thinking(ThinkingConfig::enabled(16000))
+    .max_tokens(32000)
+    .system_prompt("Reason carefully before answering.")
+    .build()?;
+```
+
+## Streaming Events
+
+When thinking is enabled, reasoning content appears in the stream:
+
+- `StreamEvent::Reasoning(text)` -- Emitted during the thinking phase
+- Stored in `ChatMessage::reasoning` field after completion
+
+## Source
+
+Defined in [`src/llm/anthropic/config.rs`](https://github.com/winfunc/appam/blob/main/src/llm/anthropic/config.rs).

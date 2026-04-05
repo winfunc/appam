@@ -1,0 +1,82 @@
+---
+title: Azure Anthropic Provider
+description: Run Claude models through Azure-hosted Anthropic-compatible endpoints with Appam's Anthropic client.
+---
+
+## Setup
+
+Appam's Azure Anthropic support reuses the Anthropic Messages client with an Azure-specific provider enum.
+
+```bash
+export AZURE_API_KEY="..."  # or AZURE_ANTHROPIC_API_KEY
+export AZURE_ANTHROPIC_BASE_URL="https://my-resource.services.ai.azure.com/anthropic"
+# or export AZURE_ANTHROPIC_RESOURCE="my-resource"
+export AZURE_ANTHROPIC_AUTH_METHOD="x_api_key"        # optional
+export AZURE_ANTHROPIC_MODEL="claude-opus-4-6"        # optional, used by the example binary
+```
+
+The provider accepts a full `base_url` instead of hardcoding a single Azure host pattern. Both `services.ai.azure.com` and `openai.azure.com` Azure Anthropic hosts were validated against the same resource during implementation.
+
+## Construction
+
+`Agent::quick()` does not auto-detect Azure Anthropic. Use `AgentBuilder` with `LlmProvider::AzureAnthropic`:
+
+```rust
+use appam::prelude::*;
+
+let agent = AgentBuilder::new("azure-anthropic-agent")
+    .provider(LlmProvider::AzureAnthropic {
+        base_url: "https://my-resource.services.ai.azure.com/anthropic".to_string(),
+        auth_method: appam::llm::anthropic::AzureAnthropicAuthMethod::XApiKey,
+    })
+    .model("claude-opus-4-6")
+    .system_prompt("You are a helpful assistant.")
+    .build()?;
+```
+
+## Authentication
+
+Azure Anthropic supports two auth modes:
+
+1. `AzureAnthropicAuthMethod::XApiKey`
+2. `AzureAnthropicAuthMethod::BearerToken`
+
+The Anthropic client resolves credentials in this order:
+
+1. `config.api_key`
+2. Auth-specific Azure Anthropic env vars
+3. `AZURE_API_KEY`
+
+## Anthropic Features
+
+Azure Anthropic keeps the normal Anthropic Messages API body and streaming semantics, so the existing Anthropic builder surface still applies:
+
+```rust
+use appam::prelude::*;
+
+let agent = AgentBuilder::new("azure-anthropic-thinking")
+    .provider(LlmProvider::AzureAnthropic {
+        base_url: "https://my-resource.services.ai.azure.com/anthropic".to_string(),
+        auth_method: appam::llm::anthropic::AzureAnthropicAuthMethod::XApiKey,
+    })
+    .model("claude-opus-4-6")
+    .system_prompt("You are a thoughtful assistant.")
+    .thinking(appam::llm::anthropic::ThinkingConfig::adaptive())
+    .effort(appam::llm::anthropic::EffortLevel::Max)
+    .tool_choice(appam::llm::anthropic::ToolChoiceConfig::Auto {
+        disable_parallel_tool_use: false,
+    })
+    .build()?;
+```
+
+## Deployment Names
+
+`.model(...)` should match the Azure deployment name you created. The example binary in this crate also reads `AZURE_ANTHROPIC_MODEL` for that value and defaults to `claude-opus-4-6`.
+
+## Example Binary
+
+The crate includes a working Azure Anthropic sample:
+
+```bash
+cargo run --example coding-agent-azure-anthropic
+```

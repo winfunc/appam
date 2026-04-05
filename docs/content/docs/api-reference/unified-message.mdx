@@ -1,0 +1,217 @@
+---
+title: UnifiedMessage
+description: Provider-agnostic message format for cross-provider compatibility.
+---
+
+## Overview
+
+`UnifiedMessage` is the canonical, provider-agnostic message type used internally by Appam to abstract over differences between LLM provider APIs. The agent runtime operates solely on these unified types, enabling seamless provider switching without code changes.
+
+All provider-specific formats (Anthropic Messages API, OpenAI Responses API, OpenRouter, Vertex Gemini) convert to and from `UnifiedMessage` transparently.
+
+## UnifiedMessage
+
+```rust
+pub struct UnifiedMessage {
+    pub role: UnifiedRole,
+    pub content: Vec<UnifiedContentBlock>,
+    pub id: Option<String>,
+    pub timestamp: Option<chrono::DateTime<chrono::Utc>>,
+    pub reasoning: Option<String>,
+    pub reasoning_details: Option<Vec<ReasoningDetail>>,
+}
+```
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `role` | `UnifiedRole` | Who sent the message (System, User, or Assistant) |
+| `content` | `Vec<UnifiedContentBlock>` | Array of typed content blocks (text, images, tool calls, etc.) |
+| `id` | `Option<String>` | Optional provider-assigned message ID for conversation continuity |
+| `timestamp` | `Option<DateTime<Utc>>` | Optional timestamp of when the message was created |
+| `reasoning` | `Option<String>` | Aggregated reasoning text, automatically preserved across multi-turn conversations |
+| `reasoning_details` | `Option<Vec<ReasoningDetail>>` | Structured reasoning details for preservation across tool calls |
+
+### Convenience Constructors
+
+```rust
+// Simple text message with any role
+let msg = UnifiedMessage::text(UnifiedRole::User, "Hello!");
+
+// Role-specific shortcuts
+let user_msg = UnifiedMessage::user("What is Rust?");
+let system_msg = UnifiedMessage::system("You are a helpful assistant.");
+let assistant_msg = UnifiedMessage::assistant("Rust is a systems programming language.");
+```
+
+### Extraction Methods
+
+```rust
+// Extract concatenated text from all Text content blocks
+let text: String = message.extract_text();
+
+// Extract all tool calls from the message
+let calls: Vec<UnifiedToolCall> = message.extract_tool_calls();
+
+// Check if the message contains any tool calls
+let has_tools: bool = message.has_tool_calls();
+
+// Extract concatenated reasoning/thinking content (None if no thinking blocks)
+let reasoning: Option<String> = message.extract_reasoning();
+```
+
+## UnifiedRole
+
+```rust
+pub enum UnifiedRole {
+    System,
+    User,
+    Assistant,
+}
+```
+
+Defines who sent the message. Unlike `Role` (used in ChatMessage), `UnifiedRole` does not include `Tool` or `Developer` -- tool results are represented as `ToolResult` content blocks within a `User` role message, and developer messages map to `System`.
+
+## UnifiedContentBlock
+
+```rust
+pub enum UnifiedContentBlock {
+    Text { text: String },
+    Image { source: ImageSource, detail: Option<String> },
+    Document { source: DocumentSource, title: Option<String> },
+    ToolUse { id: String, name: String, input: serde_json::Value },
+    ToolResult { tool_use_id: String, content: serde_json::Value, is_error: Option<bool> },
+    Thinking { thinking: String, signature: Option<String>, redacted: bool },
+}
+```
+
+### Variant Details
+
+| Variant | Description |
+|---------|-------------|
+| **Text** | Plain text content. The most common block type. |
+| **Image** | Image data with source (base64 or URL) and an optional detail level for vision models. |
+| **Document** | Document/PDF data (base64 PDF, URL PDF, or plain text) with an optional title. |
+| **ToolUse** | A tool invocation by the assistant. Contains the tool call `id`, the tool `name`, and the `input` arguments as a JSON value. |
+| **ToolResult** | Result from executing a tool. References the originating `ToolUse` by `tool_use_id`. The `content` field accepts string or structured JSON. `is_error` indicates failure. |
+| **Thinking** | Extended thinking/reasoning content from models that expose their internal reasoning. For Anthropic, includes a cryptographic `signature` for verification. The `redacted` flag indicates encrypted or redacted thinking. |
+
+## ImageSource
+
+```rust
+pub enum ImageSource {
+    Base64 { media_type: String, data: String },
+    Url { url: String },
+}
+```
+
+Images can be provided as base64-encoded data (with media type like `"image/jpeg"` or `"image/png"`) or as a URL.
+
+## DocumentSource
+
+```rust
+pub enum DocumentSource {
+    Base64Pdf { media_type: String, data: String },
+    UrlPdf { url: String },
+    Text { media_type: String, data: String },
+}
+```
+
+Documents support PDF (base64 or URL) and plain text formats.
+
+## Provider Mapping
+
+The unified format maps to and from each provider's native format:
+
+### Anthropic to Unified
+
+| Anthropic Block | Unified Block |
+|-----------------|---------------|
+| `text` | `Text` |
+| `image` | `Image` |
+| `document` | `Document` |
+| `tool_use` | `ToolUse` |
+| `tool_result` | `ToolResult` |
+| `thinking` | `Thinking` |
+
+### OpenRouter / OpenAI to Unified
+
+| Responses API Item | Unified Block |
+|--------------------|---------------|
+| `message` output | `Text` |
+| `function_call` output | `ToolUse` |
+| `function_call_output` input | `ToolResult` |
+| `reasoning` output | `Thinking` |
+
+### Vertex (Gemini) to Unified
+
+| Gemini Part | Unified Block |
+|-------------|---------------|
+| `text` | `Text` |
+| `functionCall` | `ToolUse` |
+| `functionResponse` | `ToolResult` |
+| `thought` | `Thinking` |
+
+## Related Types
+
+- [`UnifiedToolCall`](/docs/api-reference/unified-message#unifiedtoolcall) -- Extracted tool call with parsed input
+- [`UnifiedTool`](/docs/api-reference/tool-spec) -- Tool specification sent to the LLM
+- [`UnifiedUsage`](/docs/api-reference/pricing-usage) -- Token usage statistics
+- [`ChatMessage`](/docs/api-reference/chat-message) -- Simplified internal message used in sessions
+
+## UnifiedToolCall
+
+```rust
+pub struct UnifiedToolCall {
+    pub id: String,
+    pub name: String,
+    pub input: serde_json::Value,
+    pub raw_input_json: Option<String>,
+}
+```
+
+Extracted from `ToolUse` content blocks via `UnifiedMessage::extract_tool_calls()`. The `raw_input_json` field preserves the original JSON string as provided by the provider (may be partial during streaming).
+
+```rust
+// Parse tool input into a typed struct
+let args: MyToolArgs = tool_call.parse_input()?;
+```
+
+## Example
+
+```rust
+use appam::llm::unified::*;
+use serde_json::json;
+
+// Build a multimodal assistant message with a tool call
+let message = UnifiedMessage {
+    role: UnifiedRole::Assistant,
+    content: vec![
+        UnifiedContentBlock::Thinking {
+            thinking: "The user wants weather data. I should call the weather tool.".into(),
+            signature: None,
+            redacted: false,
+        },
+        UnifiedContentBlock::Text {
+            text: "Let me check the weather for you.".into(),
+        },
+        UnifiedContentBlock::ToolUse {
+            id: "call_abc123".into(),
+            name: "get_weather".into(),
+            input: json!({"location": "San Francisco, CA"}),
+        },
+    ],
+    id: None,
+    timestamp: Some(chrono::Utc::now()),
+    reasoning: None,
+    reasoning_details: None,
+};
+
+assert!(message.has_tool_calls());
+assert_eq!(message.extract_tool_calls()[0].name, "get_weather");
+assert_eq!(
+    message.extract_reasoning().unwrap(),
+    "The user wants weather data. I should call the weather tool."
+);
+```

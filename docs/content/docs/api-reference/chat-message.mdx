@@ -1,0 +1,198 @@
+---
+title: ChatMessage
+description: The primary message struct used in conversations and sessions.
+---
+
+## Overview
+
+`ChatMessage` is the simplified, unified message format used internally by agents for conversation management and session persistence. It gets converted to and from the Responses API format (OpenAI/OpenRouter) and the Messages API format (Anthropic) as needed.
+
+`ChatMessage` is the type stored in `Session.messages` and persisted in `SessionHistory`. It bridges the gap between the provider-agnostic `UnifiedMessage` and the concrete API formats.
+
+## ChatMessage
+
+```rust
+pub struct ChatMessage {
+    pub role: Role,
+    pub name: Option<String>,
+    pub tool_call_id: Option<String>,
+    pub content: Option<String>,
+    pub tool_calls: Option<Vec<ToolCall>>,
+    pub reasoning: Option<String>,
+    pub raw_content_blocks: Option<Vec<UnifiedContentBlock>>,
+    pub tool_metadata: Option<ToolExecutionMetadata>,
+    pub timestamp: Option<chrono::DateTime<chrono::Utc>>,
+    pub id: Option<String>,
+    pub status: Option<MessageStatus>,
+}
+```
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `role` | `Role` | Who sent the message -- System, User, Assistant, or Tool |
+| `name` | `Option<String>` | Optional sender name identifier, used with tool calls |
+| `tool_call_id` | `Option<String>` | ID linking a Tool-role message back to the ToolCall it responds to |
+| `content` | `Option<String>` | Primary text content of the message |
+| `tool_calls` | `Option<Vec<ToolCall>>` | Tool invocations made by the assistant in this message |
+| `reasoning` | `Option<String>` | Extended thinking/reasoning text (legacy text-only format) |
+| `raw_content_blocks` | `Option<Vec<UnifiedContentBlock>>` | Original content blocks preserving full structure (thinking signatures, multimodal content). When present, takes precedence over individual fields during reconstruction. |
+| `tool_metadata` | `Option<ToolExecutionMetadata>` | Metadata from tool execution (success status, duration, tool name, arguments) |
+| `timestamp` | `Option<DateTime<Utc>>` | When the message was created |
+| `id` | `Option<String>` | Provider-assigned message ID (required for Responses API conversation history) |
+| `status` | `Option<MessageStatus>` | Message completion status (InProgress, Completed, Incomplete, Failed) |
+
+## Role
+
+```rust
+pub enum Role {
+    System,
+    User,
+    Assistant,
+    Developer,
+    Tool,
+}
+```
+
+| Variant | Description |
+|---------|-------------|
+| `System` | System instructions defining agent behavior |
+| `User` | User input or query |
+| `Assistant` | LLM-generated response |
+| `Developer` | Developer instructions (alternative to System, used by some providers) |
+| `Tool` | Tool execution result. Converted to `function_call_output` for the Responses API. |
+
+## ToolCall
+
+```rust
+pub struct ToolCall {
+    pub id: String,
+    pub type_field: String, // serialized as "type", always "function"
+    pub function: ToolCallFunction,
+}
+
+pub struct ToolCallFunction {
+    pub name: String,
+    pub arguments: String, // JSON-encoded arguments
+}
+```
+
+When the LLM decides to use a tool, it emits one or more `ToolCall` entries. Each has:
+
+- `id` -- Unique identifier used to pair the call with its result
+- `type_field` -- Always `"function"` (serialized as `"type"` in JSON)
+- `function.name` -- The tool name to invoke
+- `function.arguments` -- JSON-encoded string of the tool's input parameters
+
+## ToolExecutionMetadata
+
+```rust
+pub struct ToolExecutionMetadata {
+    pub success: bool,
+    pub duration_ms: f64,
+    pub tool_name: String,
+    pub arguments: String,
+}
+```
+
+Stores audit information about tool execution for debugging and observability. Attached to Tool-role messages after execution.
+
+## MessageStatus
+
+```rust
+pub enum MessageStatus {
+    InProgress,
+    Completed,
+    Incomplete,
+    Failed,
+}
+```
+
+Tracks the completion state of messages. Required for assistant messages in Responses API conversation history.
+
+## Conversion Methods
+
+### To Responses API Format
+
+```rust
+let items: Vec<InputItem> = chat_message.to_input_items();
+```
+
+Converts a `ChatMessage` into one or more `InputItem` entries suitable for the Responses API. The conversion handles:
+
+- **User/System messages** -- Become `InputMessage` with `InputText` content
+- **Assistant messages** -- May produce a reasoning item, a message item, and function call items
+- **Tool messages** -- Become `FunctionCallOutput` items, paired by `tool_call_id`
+
+### From Responses API Output
+
+```rust
+let messages: Vec<ChatMessage> = ChatMessage::from_output_items(&output_items);
+```
+
+Reconstructs `ChatMessage` instances from Responses API output items. Groups reasoning, messages, and function calls into the unified structure.
+
+### ID Generation
+
+```rust
+let id: String = ChatMessage::generate_id();
+// e.g. "msg_a1b2c3d4e5f6..."
+```
+
+Generates a UUID-based message ID with the `msg_` prefix, used when a provider-assigned ID is not available.
+
+## Usage in Sessions
+
+`ChatMessage` is the message type stored in `Session.messages`:
+
+```rust
+let session = agent.run("Hello!").await?;
+
+for msg in &session.messages {
+    match msg.role {
+        Role::System => println!("[system] {}", msg.content.as_deref().unwrap_or("")),
+        Role::User => println!("[user] {}", msg.content.as_deref().unwrap_or("")),
+        Role::Assistant => {
+            if let Some(ref reasoning) = msg.reasoning {
+                println!("[thinking] {}", reasoning);
+            }
+            println!("[assistant] {}", msg.content.as_deref().unwrap_or(""));
+
+            if let Some(ref calls) = msg.tool_calls {
+                for tc in calls {
+                    println!("  -> tool call: {}({})", tc.function.name, tc.function.arguments);
+                }
+            }
+        }
+        Role::Tool => {
+            println!("[tool result] {}", msg.content.as_deref().unwrap_or(""));
+            if let Some(ref meta) = msg.tool_metadata {
+                println!("  success={} duration={}ms", meta.success, meta.duration_ms);
+            }
+        }
+        _ => {}
+    }
+}
+```
+
+## Relationship to UnifiedMessage
+
+`ChatMessage` and `UnifiedMessage` serve different purposes:
+
+| | ChatMessage | UnifiedMessage |
+|---|---|---|
+| **Used by** | Agent runtime, sessions, history | Provider conversion layer |
+| **Content model** | Flat text + separate tool_calls | Array of typed content blocks |
+| **Roles** | System, User, Assistant, Developer, Tool | System, User, Assistant |
+| **Tool results** | Separate Tool-role messages | ToolResult content blocks |
+| **Persistence** | Stored in SessionHistory (SQLite) | Transient, used during API calls |
+
+The `raw_content_blocks` field on `ChatMessage` bridges these two formats -- it preserves the full `UnifiedContentBlock` structure (including thinking signatures and multimodal data) while the flat fields (`content`, `reasoning`, `tool_calls`) provide convenient access for common operations.
+
+## See Also
+
+- [`UnifiedMessage`](/docs/api-reference/unified-message) -- Provider-agnostic message with typed content blocks
+- [`Session`](/docs/api-reference/session) -- Conversation session containing ChatMessage history
+- [`SessionHistory`](/docs/api-reference/session-history) -- Persistent session storage
+- [`StreamEvent`](/docs/api-reference/stream-event) -- Real-time streaming events that build up ChatMessages

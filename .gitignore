@@ -1,0 +1,64 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+
+# Cargo
+Cargo.lock
+
+# Configuration (may contain secrets)
+appam.toml
+*.local.toml
+
+# Logs and sessions
+/logs/
+*.log
+*.jsonl
+session-*.json
+
+# Database
+/data/
+*.db
+*.db-shm
+*.db-wal
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Examples (keep structure, ignore generated)
+/agents/
+!/examples/
+
+# Temporary files
+*.tmp
+*.bak
+.env
+.env.local
+
+# UI build output
+ui/out/
+ui/.next/
+docs/.next/
+docs/node_modules/
+docs/tsconfig.tsbuildinfo
+
+node_modules/

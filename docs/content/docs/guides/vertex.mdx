@@ -1,0 +1,98 @@
+---
+title: Google Vertex AI Provider
+description: Use Gemini models through Appam's Vertex client with streaming and function calling.
+---
+
+## Setup
+
+The Vertex client accepts either an API key or an OAuth bearer token.
+
+```bash
+export GOOGLE_VERTEX_API_KEY="..."
+# or GOOGLE_API_KEY / GEMINI_API_KEY
+
+# optional project-scoped routing
+export GOOGLE_VERTEX_PROJECT="my-gcp-project"
+export GOOGLE_VERTEX_LOCATION="us-central1"
+```
+
+Optional config-only tuning:
+
+```bash
+export GOOGLE_VERTEX_MODEL="gemini-2.5-flash"
+export GOOGLE_VERTEX_INCLUDE_THOUGHTS=true
+export GOOGLE_VERTEX_THINKING_LEVEL=HIGH
+```
+
+## Quick Start
+
+Vertex is auto-detected from `vertex/...`, `gemini-...`, and `google/gemini...` model strings:
+
+```rust
+use appam::prelude::*;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let agent = Agent::quick(
+        "gemini-2.5-flash",
+        "You are a helpful assistant.",
+        vec![],
+    )?;
+
+    agent
+        .stream("Explain quantum entanglement.")
+        .on_content(|text| print!("{}", text))
+        .run()
+        .await?;
+
+    Ok(())
+}
+```
+
+## Explicit Builder Form
+
+```rust
+use appam::prelude::*;
+
+let agent = AgentBuilder::new("vertex-agent")
+    .provider(LlmProvider::Vertex)
+    .model("gemini-2.5-pro")
+    .system_prompt("You are a helpful assistant.")
+    .build()?;
+```
+
+You can also override the API key directly:
+
+```rust
+let agent = AgentBuilder::new("vertex-agent")
+    .provider(LlmProvider::Vertex)
+    .vertex_api_key("...")
+    .model("gemini-2.5-flash")
+    .system_prompt("You are a helpful assistant.")
+    .build()?;
+```
+
+## Function Calling
+
+Tools registered with Appam are converted into Vertex function declarations automatically. The lower-level `VertexConfig` also exposes:
+
+- `function_calling_mode`
+- `allowed_function_names`
+- `stream_function_call_arguments`
+
+Those settings live on `VertexConfig`, not on dedicated `AgentBuilder` methods.
+
+## Thinking Controls
+
+Vertex thinking hints are currently configured through `VertexConfig` or the corresponding environment variables:
+
+- `GOOGLE_VERTEX_INCLUDE_THOUGHTS`
+- `GOOGLE_VERTEX_THINKING_LEVEL`
+
+There is no Vertex-specific `.thinking(...)` builder method on `AgentBuilder`.
+
+## Example Binary
+
+```bash
+cargo run --example coding-agent-vertex
+```

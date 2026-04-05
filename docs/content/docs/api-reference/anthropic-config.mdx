@@ -1,0 +1,83 @@
+---
+title: AnthropicConfig
+description: Configuration struct for direct Anthropic, Azure Anthropic, and Bedrock-backed Anthropic requests.
+---
+
+`AnthropicConfig` drives direct Anthropic requests and the Anthropic-backed Azure and Bedrock transports.
+
+## Definition
+
+```rust
+pub struct AnthropicConfig {
+    pub api_key: Option<String>,
+    pub base_url: String,
+    pub model: String,
+    pub pricing_model: Option<String>,
+    pub max_tokens: u32,
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub top_k: Option<u32>,
+    pub stream: bool,
+    pub stop_sequences: Vec<String>,
+    pub thinking: Option<ThinkingConfig>,
+    pub caching: Option<CachingConfig>,
+    pub tool_choice: Option<ToolChoiceConfig>,
+    pub effort: Option<EffortLevel>,
+    pub beta_features: BetaFeatures,
+    pub metadata: Option<RequestMetadata>,
+    pub retry: Option<RetryConfig>,
+    pub network_retry: Option<NetworkRetryConfig>,
+    pub rate_limiter: Option<RateLimiterConfig>,
+    pub bedrock: Option<BedrockConfig>,
+    pub azure: Option<AzureAnthropicConfig>,
+}
+```
+
+## Defaults from the current code
+
+- `base_url = "https://api.anthropic.com"`
+- `model = "claude-sonnet-4-5"`
+- `max_tokens = 4096`
+- `stream = true`
+
+## Validation behavior
+
+`validate()` currently checks:
+
+- when thinking is enabled, `budget_tokens < max_tokens`
+- when thinking is enabled, `budget_tokens >= 1024`
+- `temperature` and `top_k` are rejected with enabled thinking
+- `context_1m` emits a warning outside Sonnet 4 / 4.5 model families
+
+## Important related enums
+
+```rust
+pub enum EffortLevel {
+    Low,
+    Medium,
+    High,
+    Max,
+}
+
+pub enum ToolChoiceConfig {
+    Auto { disable_parallel_tool_use: bool },
+    Any { disable_parallel_tool_use: bool },
+    Tool { name: String, disable_parallel_tool_use: bool },
+    None,
+}
+```
+
+`CachingConfig` defaults to `enabled = true` and `ttl = CacheTTL::FiveMinutes`.
+
+## Azure Anthropic
+
+`azure: Option<AzureAnthropicConfig>` switches the Anthropic client to Azure-hosted Anthropic routing while keeping the Messages API body, SSE streaming, tool calling, thinking, and usage semantics aligned with the normal Anthropic client path.
+
+`AzureAnthropicConfig` carries:
+
+- `base_url` — the Azure Anthropic transport root, for example `https://resource.services.ai.azure.com/anthropic`
+- `auth_method` — `AzureAnthropicAuthMethod::XApiKey` or `AzureAnthropicAuthMethod::BearerToken`
+
+## Bedrock
+
+`bedrock: Option<BedrockConfig>` switches the Anthropic client to AWS Bedrock routing. `DynamicLlmClient::from_config(...)` also forces `stream = false` when Bedrock bearer-token auth is selected.

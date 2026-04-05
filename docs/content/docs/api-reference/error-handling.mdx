@@ -1,0 +1,172 @@
+---
+title: Error Handling
+description: Error types and tool execution error analysis.
+---
+
+## Overview
+
+Appam provides structured error types and intelligent error analysis to help diagnose tool execution failures. The error system uses `anyhow::Result` throughout for propagation and adds rich context through `ToolExecutionError` and the `analyze_tool_error` helper.
+
+**Import path:** `appam::agent::errors`
+
+## ToolExecutionError
+
+A rich error type that provides detailed context when tool execution fails, including the tool name, arguments, underlying error, and an automatically generated suggestion for fixing the issue.
+
+```rust
+#[derive(Debug)]
+pub struct ToolExecutionError {
+    pub tool_name: String,
+    pub call_id: Option<String>,
+    pub arguments: Value,
+    pub error: Error,
+    pub suggestion: Option<String>,
+}
+```
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `tool_name` | `String` | Name of the tool that failed |
+| `call_id` | `Option<String>` | Unique call ID from the LLM (if available) |
+| `arguments` | `serde_json::Value` | The JSON arguments that were provided to the tool |
+| `error` | `anyhow::Error` | The underlying error that caused the failure |
+| `suggestion` | `Option<String>` | Automatically generated suggestion for fixing the error |
+
+### Constructor
+
+```rust
+pub fn new(tool_name: impl Into<String>, args: Value, error: Error) -> Self
+```
+
+Creates a new `ToolExecutionError` and automatically calls `analyze_tool_error` to generate a suggestion. The suggestion is populated based on pattern matching against common error categories.
+
+### Builder Methods
+
+```rust
+pub fn with_call_id(mut self, call_id: impl Into<String>) -> Self
+pub fn with_suggestion(mut self, suggestion: impl Into<String>) -> Self
+```
+
+Chain these to add a call ID or override the auto-generated suggestion:
+
+```rust
+use appam::agent::errors::ToolExecutionError;
+use serde_json::json;
+
+let err = ToolExecutionError::new(
+    "read_file",
+    json!({"path": "test.txt"}),
+    anyhow::anyhow!("Missing field `file_path`"),
+)
+.with_call_id("call_abc123")
+.with_suggestion("Use 'file_path' instead of 'path'");
+```
+
+### Display Format
+
+`ToolExecutionError` implements `Display` with a structured tree format:
+
+```
+Tool execution failed
+  |-- Tool: read_file
+  |-- Call ID: call_abc123
+  |-- Arguments: {
+    "path": "test.txt"
+  }
+  |-- Reason: Missing field `file_path`
+
+  Help: The tool 'read_file' expects field 'file_path' but received 'path'.
+        Check the tool schema or ensure the LLM provides the correct field name.
+```
+
+Long arguments (over 200 characters) are automatically truncated in the display output.
+
+### Error Trait
+
+`ToolExecutionError` implements `std::error::Error` with `source()` returning the underlying `anyhow::Error`, enabling standard error chain inspection.
+
+## analyze_tool_error
+
+```rust
+pub fn analyze_tool_error(
+    tool_name: &str,
+    args: &Value,
+    error: &Error,
+) -> Option<String>
+```
+
+Analyzes a tool execution error and returns a context-aware suggestion for fixing it. This function is called automatically by `ToolExecutionError::new()` but can also be used independently.
+
+### Detected Error Patterns
+
+The analyzer matches against these common error categories:
+
+| Pattern | Detection | Suggestion |
+|---------|-----------|------------|
+| **Missing field** | `"missing field"` in error message | Identifies the missing field name, checks for similar fields in the provided arguments using substring matching and Levenshtein distance (threshold of 1-2 edits) |
+| **Type mismatch** | `"invalid type"` or `"type mismatch"` | Suggests checking parameter types against the tool schema |
+| **Parse failure** | `"failed to parse"` or `"deserialization"` | Suggests the LLM may have provided malformed JSON |
+| **File not found** | `"no such file"` or `"not found"` | Suggests verifying paths and adding existence checks |
+| **Permission denied** | `"permission denied"` or `"access denied"` | Suggests checking file permissions |
+
+### Typo Detection
+
+When a missing field error is detected, the analyzer uses two strategies to find similar field names in the provided arguments:
+
+1. **Substring matching** -- checks if one field name contains the other (e.g., `file_path` contains `path`)
+2. **Levenshtein distance** -- detects typos within 1-2 character edits (e.g., `filepath` vs `file_path`)
+
+```rust
+use appam::agent::errors::analyze_tool_error;
+use serde_json::json;
+
+let args = json!({"path": "file.txt"});
+let error = anyhow::anyhow!("Missing field `file_path`");
+let suggestion = analyze_tool_error("read_file", &args, &error);
+
+// Returns: Some("The tool 'read_file' expects field 'file_path' but received 'path'. ...")
+```
+
+## Error Flow in Streaming
+
+During agent execution, errors are surfaced through `StreamEvent` variants:
+
+```
+StreamEvent::ToolCallFailed { tool_name, error }
+```
+Emitted when a tool raises an error during execution. The error message is reported back to the LLM so it can self-correct (e.g., fix a typo in arguments and retry).
+
+```
+StreamEvent::Error { message }
+```
+Emitted for unrecoverable errors that terminate the session. This is always the final event when it occurs.
+
+### Self-Correction Loop
+
+When a tool call fails, the agent runtime:
+1. Creates a `ToolExecutionError` with analysis
+2. Emits `StreamEvent::ToolCallFailed` to consumers
+3. Sends the error message back to the LLM as a tool result
+4. The LLM may adjust its arguments and retry the tool call
+5. This continues until success or the LLM decides to respond without the tool
+
+## Error Propagation
+
+Appam uses `anyhow::Result` throughout the codebase. The prelude re-exports `anyhow::Result` and `anyhow::Context` for convenience:
+
+```rust
+use appam::prelude::*;
+
+// Result is anyhow::Result
+fn load_data() -> Result<String> {
+    let content = std::fs::read_to_string("data.txt")
+        .context("Failed to read data file")?;
+    Ok(content)
+}
+```
+
+## Source
+
+Defined in [`src/agent/errors.rs`](https://github.com/winfunc/appam/blob/main/src/agent/errors.rs).

@@ -1,0 +1,1615 @@
+{
+  "default": {
+    "cache_read": 0.3,
+    "cache_write": 3.75,
+    "input": 3,
+    "name": "Unknown Model",
+    "output": 15
+  },
+  "providers": {
+    "anthropic": {
+      "claude-3-5-haiku-20241022": {
+        "cache_read": 0.08,
+        "cache_write": 1,
+        "input": 0.8,
+        "name": "Claude Haiku 3.5",
+        "output": 4
+      },
+      "claude-3-5-haiku-latest": {
+        "cache_read": 0.08,
+        "cache_write": 1,
+        "input": 0.8,
+        "name": "Claude Haiku 3.5 (latest)",
+        "output": 4
+      },
+      "claude-3-5-sonnet-20240620": {
+        "cache_read": 0.3,
+        "cache_write": 3.75,
+        "input": 3,
+        "name": "Claude Sonnet 3.5",
+        "output": 15
+      },
+      "claude-3-5-sonnet-20241022": {
+        "cache_read": 0.3,
+        "cache_write": 3.75,
+        "input": 3,
+        "name": "Claude Sonnet 3.5 v2",
+        "output": 15
+      },
+      "claude-3-7-sonnet-20250219": {
+        "cache_read": 0.3,
+        "cache_write": 3.75,
+        "input": 3,
+        "name": "Claude Sonnet 3.7",
+        "output": 15
+      },
+      "claude-3-7-sonnet-latest": {
+        "cache_read": 0.3,
+        "cache_write": 3.75,
+        "input": 3,
+        "name": "Claude Sonnet 3.7 (latest)",
+        "output": 15
+      },
+      "claude-3-haiku-20240307": {
+        "cache_read": 0.03,
+        "cache_write": 0.3,
+        "input": 0.25,
+        "name": "Claude Haiku 3",
+        "output": 1.25
+      },
+      "claude-3-opus-20240229": {
+        "cache_read": 1.5,
+        "cache_write": 18.75,
+        "input": 15,
+        "name": "Claude Opus 3",
+        "output": 75
+      },
+      "claude-3-sonnet-20240229": {
+        "cache_read": 0.3,
+        "cache_write": 0.3,
+        "input": 3,
+        "name": "Claude Sonnet 3",
+        "output": 15
+      },
+      "claude-haiku-4-5": {
+        "cache_read": 0.1,
+        "cache_write": 1.25,
+        "input": 1,
+        "name": "Claude Haiku 4.5 (latest)",
+        "output": 5
+      },
+      "claude-haiku-4-5-20251001": {
+        "cache_read": 0.1,
+        "cache_write": 1.25,
+        "input": 1,
+        "name": "Claude Haiku 4.5",
+        "output": 5
+      },
+      "claude-opus-4-0": {
+        "cache_read": 1.5,
+        "cache_write": 18.75,
+        "input": 15,
+        "name": "Claude Opus 4 (latest)",
+        "output": 75
+      },
+      "claude-opus-4-1": {
+        "cache_read": 1.5,
+        "cache_write": 18.75,
+        "input": 15,
+        "name": "Claude Opus 4.1 (latest)",
+        "output": 75
+      },
+      "claude-opus-4-1-20250805": {
+        "cache_read": 1.5,
+        "cache_write": 18.75,
+        "input": 15,
+        "name": "Claude Opus 4.1",
+        "output": 75
+      },
+      "claude-opus-4-20250514": {
+        "cache_read": 1.5,
+        "cache_write": 18.75,
+        "input": 15,
+        "name": "Claude Opus 4",
+        "output": 75
+      },
+      "claude-opus-4-5": {
+        "cache_read": 0.5,
+        "cache_write": 6.25,
+        "input": 5,
+        "name": "Claude Opus 4.5 (latest)",
+        "output": 25
+      },
+      "claude-opus-4-5-20251101": {
+        "cache_read": 0.5,
+        "cache_write": 6.25,
+        "input": 5,
+        "name": "Claude Opus 4.5",
+        "output": 25
+      },
+      "claude-opus-4-6": {
+        "cache_read": 0.5,
+        "cache_write": 6.25,
+        "input": 5,
+        "name": "Claude Opus 4.6",
+        "output": 25
+      },
+      "claude-sonnet-4-0": {
+        "cache_read": 0.3,
+        "cache_write": 3.75,
+        "input": 3,
+        "name": "Claude Sonnet 4 (latest)",
+        "output": 15
+      },
+      "claude-sonnet-4-20250514": {
+        "cache_read": 0.3,
+        "cache_write": 3.75,
+        "input": 3,
+        "name": "Claude Sonnet 4",
+        "output": 15
+      },
+      "claude-sonnet-4-5": {
+        "cache_read": 0.3,
+        "cache_write": 3.75,
+        "input": 3,
+        "name": "Claude Sonnet 4.5 (latest)",
+        "output": 15
+      },
+      "claude-sonnet-4-5-20250929": {
+        "cache_read": 0.3,
+        "cache_write": 3.75,
+        "input": 3,
+        "name": "Claude Sonnet 4.5",
+        "output": 15
+      },
+      "claude-sonnet-4-6": {
+        "cache_read": 0.3,
+        "cache_write": 3.75,
+        "input": 3,
+        "name": "Claude Sonnet 4.6",
+        "output": 15
+      }
+    },
+    "openai": {
+      "codex-mini-latest": {
+        "cache_read": 0.375,
+        "input": 1.5,
+        "name": "Codex Mini",
+        "output": 6
+      },
+      "gpt-3.5-turbo": {
+        "cache_read": 1.25,
+        "input": 0.5,
+        "name": "GPT-3.5-turbo",
+        "output": 1.5
+      },
+      "gpt-4": {
+        "input": 30,
+        "name": "GPT-4",
+        "output": 60
+      },
+      "gpt-4-turbo": {
+        "input": 10,
+        "name": "GPT-4 Turbo",
+        "output": 30
+      },
+      "gpt-4.1": {
+        "cache_read": 0.5,
+        "input": 2,
+        "name": "GPT-4.1",
+        "output": 8
+      },
+      "gpt-4.1-mini": {
+        "cache_read": 0.1,
+        "input": 0.4,
+        "name": "GPT-4.1 mini",
+        "output": 1.6
+      },
+      "gpt-4.1-nano": {
+        "cache_read": 0.03,
+        "input": 0.1,
+        "name": "GPT-4.1 nano",
+        "output": 0.4
+      },
+      "gpt-4o": {
+        "cache_read": 1.25,
+        "input": 2.5,
+        "name": "GPT-4o",
+        "output": 10
+      },
+      "gpt-4o-2024-05-13": {
+        "input": 5,
+        "name": "GPT-4o (2024-05-13)",
+        "output": 15
+      },
+      "gpt-4o-2024-08-06": {
+        "cache_read": 1.25,
+        "input": 2.5,
+        "name": "GPT-4o (2024-08-06)",
+        "output": 10
+      },
+      "gpt-4o-2024-11-20": {
+        "cache_read": 1.25,
+        "input": 2.5,
+        "name": "GPT-4o (2024-11-20)",
+        "output": 10
+      },
+      "gpt-4o-mini": {
+        "cache_read": 0.08,
+        "input": 0.15,
+        "name": "GPT-4o mini",
+        "output": 0.6
+      },
+      "gpt-5": {
+        "cache_read": 0.125,
+        "input": 1.25,
+        "name": "GPT-5",
+        "output": 10
+      },
+      "gpt-5-chat-latest": {
+        "input": 1.25,
+        "name": "GPT-5 Chat (latest)",
+        "output": 10
+      },
+      "gpt-5-codex": {
+        "cache_read": 0.125,
+        "input": 1.25,
+        "name": "GPT-5-Codex",
+        "output": 10
+      },
+      "gpt-5-mini": {
+        "cache_read": 0.025,
+        "input": 0.25,
+        "name": "GPT-5 Mini",
+        "output": 2
+      },
+      "gpt-5-nano": {
+        "cache_read": 0.005,
+        "input": 0.05,
+        "name": "GPT-5 Nano",
+        "output": 0.4
+      },
+      "gpt-5-pro": {
+        "input": 15,
+        "name": "GPT-5 Pro",
+        "output": 120
+      },
+      "gpt-5.1": {
+        "cache_read": 0.13,
+        "input": 1.25,
+        "name": "GPT-5.1",
+        "output": 10
+      },
+      "gpt-5.1-chat-latest": {
+        "cache_read": 0.125,
+        "input": 1.25,
+        "name": "GPT-5.1 Chat",
+        "output": 10
+      },
+      "gpt-5.1-codex": {
+        "cache_read": 0.125,
+        "input": 1.25,
+        "name": "GPT-5.1 Codex",
+        "output": 10
+      },
+      "gpt-5.1-codex-max": {
+        "cache_read": 0.125,
+        "input": 1.25,
+        "name": "GPT-5.1 Codex Max",
+        "output": 10
+      },
+      "gpt-5.1-codex-mini": {
+        "cache_read": 0.025,
+        "input": 0.25,
+        "name": "GPT-5.1 Codex mini",
+        "output": 2
+      },
+      "gpt-5.2": {
+        "cache_read": 0.175,
+        "input": 1.75,
+        "name": "GPT-5.2",
+        "output": 14
+      },
+      "gpt-5.2-chat-latest": {
+        "cache_read": 0.175,
+        "input": 1.75,
+        "name": "GPT-5.2 Chat",
+        "output": 14
+      },
+      "gpt-5.2-codex": {
+        "cache_read": 0.175,
+        "input": 1.75,
+        "name": "GPT-5.2 Codex",
+        "output": 14
+      },
+      "gpt-5.2-pro": {
+        "input": 21,
+        "name": "GPT-5.2 Pro",
+        "output": 168
+      },
+      "gpt-5.3-codex": {
+        "cache_read": 0.175,
+        "input": 1.75,
+        "name": "GPT-5.3 Codex",
+        "output": 14
+      },
+      "gpt-5.3-codex-spark": {
+        "cache_read": 0.175,
+        "input": 1.75,
+        "name": "GPT-5.3 Codex Spark",
+        "output": 14
+      },
+      "gpt-5.4": {
+        "cache_read": 0.25,
+        "cache_read_base": 0.25,
+        "cache_read_extended": 0.5,
+        "input": 2.5,
+        "input_base": 2.5,
+        "input_extended": 5,
+        "name": "GPT-5.4",
+        "output": 15,
+        "output_base": 15,
+        "output_extended": 22.5,
+        "threshold_tokens": 200000
+      },
+      "gpt-5.4-mini": {
+        "cache_read": 0.075,
+        "input": 0.75,
+        "name": "GPT-5.4 mini",
+        "output": 4.5
+      },
+      "gpt-5.4-nano": {
+        "cache_read": 0.02,
+        "input": 0.2,
+        "name": "GPT-5.4 nano",
+        "output": 1.25
+      },
+      "gpt-5.4-pro": {
+        "input": 30,
+        "input_base": 30,
+        "input_extended": 60,
+        "name": "GPT-5.4 Pro",
+        "output": 180,
+        "output_base": 180,
+        "output_extended": 270,
+        "threshold_tokens": 200000
+      },
+      "o1": {
+        "cache_read": 7.5,
+        "input": 15,
+        "name": "o1",
+        "output": 60
+      },
+      "o1-mini": {
+        "cache_read": 0.55,
+        "input": 1.1,
+        "name": "o1-mini",
+        "output": 4.4
+      },
+      "o1-preview": {
+        "cache_read": 7.5,
+        "input": 15,
+        "name": "o1-preview",
+        "output": 60
+      },
+      "o1-pro": {
+        "input": 150,
+        "name": "o1-pro",
+        "output": 600
+      },
+      "o3": {
+        "cache_read": 0.5,
+        "input": 2,
+        "name": "o3",
+        "output": 8
+      },
+      "o3-deep-research": {
+        "cache_read": 2.5,
+        "input": 10,
+        "name": "o3-deep-research",
+        "output": 40
+      },
+      "o3-mini": {
+        "cache_read": 0.55,
+        "input": 1.1,
+        "name": "o3-mini",
+        "output": 4.4
+      },
+      "o3-pro": {
+        "input": 20,
+        "name": "o3-pro",
+        "output": 80
+      },
+      "o4-mini": {
+        "cache_read": 0.28,
+        "input": 1.1,
+        "name": "o4-mini",
+        "output": 4.4
+      },
+      "o4-mini-deep-research": {
+        "cache_read": 0.5,
+        "input": 2,
+        "name": "o4-mini-deep-research",
+        "output": 8
+      },
+      "text-embedding-3-large": {
+        "input": 0.13,
+        "name": "text-embedding-3-large",
+        "output": 0
+      },
+      "text-embedding-3-small": {
+        "input": 0.02,
+        "name": "text-embedding-3-small",
+        "output": 0
+      },
+      "text-embedding-ada-002": {
+        "input": 0.1,
+        "name": "text-embedding-ada-002",
+        "output": 0
+      }
+    },
+    "openrouter": {
+      "anthropic/claude-3.5-haiku": {
+        "cache_read": 0.08,
+        "cache_write": 1,
+        "input": 0.8,
+        "name": "Claude Haiku 3.5",
+        "output": 4
+      },
+      "anthropic/claude-3.7-sonnet": {
+        "cache_read": 1.5,
+        "cache_write": 18.75,
+        "input": 15,
+        "name": "Claude Sonnet 3.7",
+        "output": 75
+      },
+      "anthropic/claude-haiku-4.5": {
+        "cache_read": 0.1,
+        "cache_write": 1.25,
+        "input": 1,
+        "name": "Claude Haiku 4.5",
+        "output": 5
+      },
+      "anthropic/claude-opus-4": {
+        "cache_read": 1.5,
+        "cache_write": 18.75,
+        "input": 15,
+        "name": "Claude Opus 4",
+        "output": 75
+      },
+      "anthropic/claude-opus-4.1": {
+        "cache_read": 1.5,
+        "cache_write": 18.75,
+        "input": 15,
+        "name": "Claude Opus 4.1",
+        "output": 75
+      },
+      "anthropic/claude-opus-4.5": {
+        "cache_read": 0.5,
+        "cache_write": 6.25,
+        "input": 5,
+        "name": "Claude Opus 4.5",
+        "output": 25
+      },
+      "anthropic/claude-opus-4.6": {
+        "cache_read": 0.5,
+        "cache_read_base": 0.5,
+        "cache_read_extended": 1,
+        "cache_write": 6.25,
+        "cache_write_base": 6.25,
+        "cache_write_extended": 12.5,
+        "input": 5,
+        "input_base": 5,
+        "input_extended": 10,
+        "name": "Claude Opus 4.6",
+        "output": 25,
+        "output_base": 25,
+        "output_extended": 37.5,
+        "threshold_tokens": 200000
+      },
+      "anthropic/claude-sonnet-4": {
+        "cache_read": 0.3,
+        "cache_read_base": 0.3,
+        "cache_read_extended": 0.6,
+        "cache_write": 3.75,
+        "cache_write_base": 3.75,
+        "cache_write_extended": 7.5,
+        "input": 3,
+        "input_base": 3,
+        "input_extended": 6,
+        "name": "Claude Sonnet 4",
+        "output": 15,
+        "output_base": 15,
+        "output_extended": 22.5,
+        "threshold_tokens": 200000
+      },
+      "anthropic/claude-sonnet-4.5": {
+        "cache_read": 0.3,
+        "cache_read_base": 0.3,
+        "cache_read_extended": 0.6,
+        "cache_write": 3.75,
+        "cache_write_base": 3.75,
+        "cache_write_extended": 7.5,
+        "input": 3,
+        "input_base": 3,
+        "input_extended": 6,
+        "name": "Claude Sonnet 4.5",
+        "output": 15,
+        "output_base": 15,
+        "output_extended": 22.5,
+        "threshold_tokens": 200000
+      },
+      "anthropic/claude-sonnet-4.6": {
+        "cache_read": 0.3,
+        "cache_read_base": 0.3,
+        "cache_read_extended": 0.6,
+        "cache_write": 3.75,
+        "cache_write_base": 3.75,
+        "cache_write_extended": 7.5,
+        "input": 3,
+        "input_base": 3,
+        "input_extended": 6,
+        "name": "Claude Sonnet 4.6",
+        "output": 15,
+        "output_base": 15,
+        "output_extended": 22.5,
+        "threshold_tokens": 200000
+      },
+      "arcee-ai/trinity-large-preview:free": {
+        "input": 0,
+        "name": "Trinity Large Preview",
+        "output": 0
+      },
+      "arcee-ai/trinity-mini:free": {
+        "input": 0,
+        "name": "Trinity Mini",
+        "output": 0
+      },
+      "black-forest-labs/flux.2-flex": {
+        "input": 0,
+        "name": "FLUX.2 Flex",
+        "output": 0
+      },
+      "black-forest-labs/flux.2-klein-4b": {
+        "input": 0,
+        "name": "FLUX.2 Klein 4B",
+        "output": 0
+      },
+      "black-forest-labs/flux.2-max": {
+        "input": 0,
+        "name": "FLUX.2 Max",
+        "output": 0
+      },
+      "black-forest-labs/flux.2-pro": {
+        "input": 0,
+        "name": "FLUX.2 Pro",
+        "output": 0
+      },
+      "bytedance-seed/seedream-4.5": {
+        "input": 0,
+        "name": "Seedream 4.5",
+        "output": 0
+      },
+      "cognitivecomputations/dolphin-mistral-24b-venice-edition:free": {
+        "input": 0,
+        "name": "Uncensored (free)",
+        "output": 0
+      },
+      "deepseek/deepseek-chat-v3-0324": {
+        "input": 0,
+        "name": "DeepSeek V3 0324",
+        "output": 0
+      },
+      "deepseek/deepseek-chat-v3.1": {
+        "input": 0.2,
+        "name": "DeepSeek-V3.1",
+        "output": 0.8
+      },
+      "deepseek/deepseek-r1-distill-llama-70b": {
+        "input": 0,
+        "name": "DeepSeek R1 Distill Llama 70B",
+        "output": 0
+      },
+      "deepseek/deepseek-v3.1-terminus": {
+        "input": 0.27,
+        "name": "DeepSeek V3.1 Terminus",
+        "output": 1
+      },
+      "deepseek/deepseek-v3.1-terminus:exacto": {
+        "input": 0.27,
+        "name": "DeepSeek V3.1 Terminus (exacto)",
+        "output": 1
+      },
+      "deepseek/deepseek-v3.2": {
+        "input": 0.28,
+        "name": "DeepSeek V3.2",
+        "output": 0.4
+      },
+      "deepseek/deepseek-v3.2-speciale": {
+        "input": 0.27,
+        "name": "DeepSeek V3.2 Speciale",
+        "output": 0.41
+      },
+      "google/gemini-2.0-flash-001": {
+        "cache_read": 0.025,
+        "input": 0.1,
+        "name": "Gemini 2.0 Flash",
+        "output": 0.4
+      },
+      "google/gemini-2.5-flash": {
+        "cache_read": 0.0375,
+        "input": 0.3,
+        "name": "Gemini 2.5 Flash",
+        "output": 2.5
+      },
+      "google/gemini-2.5-flash-lite": {
+        "cache_read": 0.025,
+        "input": 0.1,
+        "name": "Gemini 2.5 Flash Lite",
+        "output": 0.4
+      },
+      "google/gemini-2.5-flash-lite-preview-09-2025": {
+        "cache_read": 0.025,
+        "input": 0.1,
+        "name": "Gemini 2.5 Flash Lite Preview 09-25",
+        "output": 0.4
+      },
+      "google/gemini-2.5-flash-preview-09-2025": {
+        "cache_read": 0.031,
+        "input": 0.3,
+        "name": "Gemini 2.5 Flash Preview 09-25",
+        "output": 2.5
+      },
+      "google/gemini-2.5-pro": {
+        "cache_read": 0.31,
+        "input": 1.25,
+        "name": "Gemini 2.5 Pro",
+        "output": 10
+      },
+      "google/gemini-2.5-pro-preview-05-06": {
+        "cache_read": 0.31,
+        "input": 1.25,
+        "name": "Gemini 2.5 Pro Preview 05-06",
+        "output": 10
+      },
+      "google/gemini-2.5-pro-preview-06-05": {
+        "cache_read": 0.31,
+        "input": 1.25,
+        "name": "Gemini 2.5 Pro Preview 06-05",
+        "output": 10
+      },
+      "google/gemini-3-flash-preview": {
+        "cache_read": 0.05,
+        "input": 0.5,
+        "name": "Gemini 3 Flash Preview",
+        "output": 3
+      },
+      "google/gemini-3-pro-preview": {
+        "input": 2,
+        "name": "Gemini 3 Pro Preview",
+        "output": 12
+      },
+      "google/gemini-3.1-flash-lite-preview": {
+        "cache_read": 0.025,
+        "cache_write": 0.083,
+        "input": 0.25,
+        "name": "Gemini 3.1 Flash Lite Preview",
+        "output": 1.5,
+        "reasoning": 1.5
+      },
+      "google/gemini-3.1-pro-preview": {
+        "cache_read_extended": 0.4,
+        "input": 2,
+        "input_base": 2,
+        "input_extended": 4,
+        "name": "Gemini 3.1 Pro Preview",
+        "output": 12,
+        "output_base": 12,
+        "output_extended": 18,
+        "reasoning": 12,
+        "threshold_tokens": 200000
+      },
+      "google/gemini-3.1-pro-preview-customtools": {
+        "cache_read_extended": 0.4,
+        "input": 2,
+        "input_base": 2,
+        "input_extended": 4,
+        "name": "Gemini 3.1 Pro Preview Custom Tools",
+        "output": 12,
+        "output_base": 12,
+        "output_extended": 18,
+        "reasoning": 12,
+        "threshold_tokens": 200000
+      },
+      "google/gemma-2-9b-it": {
+        "input": 0.03,
+        "name": "Gemma 2 9B",
+        "output": 0.09
+      },
+      "google/gemma-3-12b-it": {
+        "input": 0.03,
+        "name": "Gemma 3 12B",
+        "output": 0.1
+      },
+      "google/gemma-3-12b-it:free": {
+        "input": 0,
+        "name": "Gemma 3 12B (free)",
+        "output": 0
+      },
+      "google/gemma-3-27b-it": {
+        "input": 0.04,
+        "name": "Gemma 3 27B",
+        "output": 0.15
+      },
+      "google/gemma-3-27b-it:free": {
+        "input": 0,
+        "name": "Gemma 3 27B (free)",
+        "output": 0
+      },
+      "google/gemma-3-4b-it": {
+        "input": 0.01703,
+        "name": "Gemma 3 4B",
+        "output": 0.06815
+      },
+      "google/gemma-3-4b-it:free": {
+        "input": 0,
+        "name": "Gemma 3 4B (free)",
+        "output": 0
+      },
+      "google/gemma-3n-e2b-it:free": {
+        "input": 0,
+        "name": "Gemma 3n 2B (free)",
+        "output": 0
+      },
+      "google/gemma-3n-e4b-it": {
+        "input": 0.02,
+        "name": "Gemma 3n 4B",
+        "output": 0.04
+      },
+      "google/gemma-3n-e4b-it:free": {
+        "input": 0,
+        "name": "Gemma 3n 4B (free)",
+        "output": 0
+      },
+      "inception/mercury": {
+        "cache_read": 0.025,
+        "input": 0.25,
+        "name": "Mercury",
+        "output": 0.75
+      },
+      "inception/mercury-2": {
+        "cache_read": 0.025,
+        "input": 0.25,
+        "name": "Mercury 2",
+        "output": 0.75
+      },
+      "inception/mercury-coder": {
+        "cache_read": 0.025,
+        "input": 0.25,
+        "name": "Mercury Coder",
+        "output": 0.75
+      },
+      "liquid/lfm-2.5-1.2b-instruct:free": {
+        "input": 0,
+        "name": "LFM2.5-1.2B-Instruct (free)",
+        "output": 0
+      },
+      "liquid/lfm-2.5-1.2b-thinking:free": {
+        "input": 0,
+        "name": "LFM2.5-1.2B-Thinking (free)",
+        "output": 0
+      },
+      "meta-llama/llama-3.2-11b-vision-instruct": {
+        "input": 0,
+        "name": "Llama 3.2 11B Vision Instruct",
+        "output": 0
+      },
+      "meta-llama/llama-3.2-3b-instruct:free": {
+        "input": 0,
+        "name": "Llama 3.2 3B Instruct (free)",
+        "output": 0
+      },
+      "meta-llama/llama-3.3-70b-instruct:free": {
+        "input": 0,
+        "name": "Llama 3.3 70B Instruct (free)",
+        "output": 0
+      },
+      "minimax/minimax-01": {
+        "input": 0.2,
+        "name": "MiniMax-01",
+        "output": 1.1
+      },
+      "minimax/minimax-m1": {
+        "input": 0.4,
+        "name": "MiniMax M1",
+        "output": 2.2
+      },
+      "minimax/minimax-m2": {
+        "cache_read": 0.28,
+        "cache_write": 1.15,
+        "input": 0.28,
+        "name": "MiniMax M2",
+        "output": 1.15
+      },
+      "minimax/minimax-m2.1": {
+        "input": 0.3,
+        "name": "MiniMax M2.1",
+        "output": 1.2
+      },
+      "minimax/minimax-m2.5": {
+        "cache_read": 0.03,
+        "input": 0.3,
+        "name": "MiniMax M2.5",
+        "output": 1.2
+      },
+      "minimax/minimax-m2.7": {
+        "cache_read": 0.06,
+        "cache_write": 0.375,
+        "input": 0.3,
+        "name": "MiniMax M2.7",
+        "output": 1.2
+      },
+      "mistralai/codestral-2508": {
+        "input": 0.3,
+        "name": "Codestral 2508",
+        "output": 0.9
+      },
+      "mistralai/devstral-2512": {
+        "input": 0.15,
+        "name": "Devstral 2 2512",
+        "output": 0.6
+      },
+      "mistralai/devstral-medium-2507": {
+        "input": 0.4,
+        "name": "Devstral Medium",
+        "output": 2
+      },
+      "mistralai/devstral-small-2505": {
+        "input": 0.06,
+        "name": "Devstral Small",
+        "output": 0.12
+      },
+      "mistralai/devstral-small-2507": {
+        "input": 0.1,
+        "name": "Devstral Small 1.1",
+        "output": 0.3
+      },
+      "mistralai/mistral-medium-3": {
+        "input": 0.4,
+        "name": "Mistral Medium 3",
+        "output": 2
+      },
+      "mistralai/mistral-medium-3.1": {
+        "input": 0.4,
+        "name": "Mistral Medium 3.1",
+        "output": 2
+      },
+      "mistralai/mistral-small-3.1-24b-instruct": {
+        "input": 0,
+        "name": "Mistral Small 3.1 24B Instruct",
+        "output": 0
+      },
+      "mistralai/mistral-small-3.2-24b-instruct": {
+        "input": 0,
+        "name": "Mistral Small 3.2 24B Instruct",
+        "output": 0
+      },
+      "moonshotai/kimi-k2": {
+        "input": 0.55,
+        "name": "Kimi K2",
+        "output": 2.2
+      },
+      "moonshotai/kimi-k2-0905": {
+        "input": 0.6,
+        "name": "Kimi K2 Instruct 0905",
+        "output": 2.5
+      },
+      "moonshotai/kimi-k2-0905:exacto": {
+        "input": 0.6,
+        "name": "Kimi K2 Instruct 0905 (exacto)",
+        "output": 2.5
+      },
+      "moonshotai/kimi-k2-thinking": {
+        "cache_read": 0.15,
+        "input": 0.6,
+        "name": "Kimi K2 Thinking",
+        "output": 2.5
+      },
+      "moonshotai/kimi-k2.5": {
+        "cache_read": 0.1,
+        "input": 0.6,
+        "name": "Kimi K2.5",
+        "output": 3
+      },
+      "moonshotai/kimi-k2:free": {
+        "input": 0,
+        "name": "Kimi K2 (free)",
+        "output": 0
+      },
+      "nousresearch/hermes-3-llama-3.1-405b:free": {
+        "input": 0,
+        "name": "Hermes 3 405B Instruct (free)",
+        "output": 0
+      },
+      "nousresearch/hermes-4-405b": {
+        "input": 1,
+        "name": "Hermes 4 405B",
+        "output": 3
+      },
+      "nousresearch/hermes-4-70b": {
+        "input": 0.13,
+        "name": "Hermes 4 70B",
+        "output": 0.4
+      },
+      "nvidia/nemotron-3-nano-30b-a3b:free": {
+        "input": 0,
+        "name": "Nemotron 3 Nano 30B A3B (free)",
+        "output": 0
+      },
+      "nvidia/nemotron-3-super-120b-a12b": {
+        "input": 0.1,
+        "name": "Nemotron 3 Super",
+        "output": 0.5
+      },
+      "nvidia/nemotron-3-super-120b-a12b-free": {
+        "input": 0,
+        "name": "Nemotron 3 Super (free)",
+        "output": 0
+      },
+      "nvidia/nemotron-nano-12b-v2-vl:free": {
+        "input": 0,
+        "name": "Nemotron Nano 12B 2 VL (free)",
+        "output": 0
+      },
+      "nvidia/nemotron-nano-9b-v2": {
+        "input": 0.04,
+        "name": "nvidia-nemotron-nano-9b-v2",
+        "output": 0.16
+      },
+      "nvidia/nemotron-nano-9b-v2:free": {
+        "input": 0,
+        "name": "Nemotron Nano 9B V2 (free)",
+        "output": 0
+      },
+      "openai/gpt-4.1": {
+        "cache_read": 0.5,
+        "input": 2,
+        "name": "GPT-4.1",
+        "output": 8
+      },
+      "openai/gpt-4.1-mini": {
+        "cache_read": 0.1,
+        "input": 0.4,
+        "name": "GPT-4.1 Mini",
+        "output": 1.6
+      },
+      "openai/gpt-4o-mini": {
+        "cache_read": 0.08,
+        "input": 0.15,
+        "name": "GPT-4o-mini",
+        "output": 0.6
+      },
+      "openai/gpt-5": {
+        "input": 1.25,
+        "name": "GPT-5",
+        "output": 10
+      },
+      "openai/gpt-5-chat": {
+        "input": 1.25,
+        "name": "GPT-5 Chat (latest)",
+        "output": 10
+      },
+      "openai/gpt-5-codex": {
+        "cache_read": 0.125,
+        "input": 1.25,
+        "name": "GPT-5 Codex",
+        "output": 10
+      },
+      "openai/gpt-5-image": {
+        "cache_read": 1.25,
+        "input": 5,
+        "name": "GPT-5 Image",
+        "output": 10
+      },
+      "openai/gpt-5-mini": {
+        "input": 0.25,
+        "name": "GPT-5 Mini",
+        "output": 2
+      },
+      "openai/gpt-5-nano": {
+        "input": 0.05,
+        "name": "GPT-5 Nano",
+        "output": 0.4
+      },
+      "openai/gpt-5-pro": {
+        "input": 15,
+        "name": "GPT-5 Pro",
+        "output": 120
+      },
+      "openai/gpt-5.1": {
+        "cache_read": 0.125,
+        "input": 1.25,
+        "name": "GPT-5.1",
+        "output": 10
+      },
+      "openai/gpt-5.1-chat": {
+        "cache_read": 0.125,
+        "input": 1.25,
+        "name": "GPT-5.1 Chat",
+        "output": 10
+      },
+      "openai/gpt-5.1-codex": {
+        "cache_read": 0.125,
+        "input": 1.25,
+        "name": "GPT-5.1-Codex",
+        "output": 10
+      },
+      "openai/gpt-5.1-codex-max": {
+        "cache_read": 0.11,
+        "input": 1.1,
+        "name": "GPT-5.1-Codex-Max",
+        "output": 9
+      },
+      "openai/gpt-5.1-codex-mini": {
+        "cache_read": 0.025,
+        "input": 0.25,
+        "name": "GPT-5.1-Codex-Mini",
+        "output": 2
+      },
+      "openai/gpt-5.2": {
+        "cache_read": 0.175,
+        "input": 1.75,
+        "name": "GPT-5.2",
+        "output": 14
+      },
+      "openai/gpt-5.2-chat": {
+        "cache_read": 0.175,
+        "input": 1.75,
+        "name": "GPT-5.2 Chat",
+        "output": 14
+      },
+      "openai/gpt-5.2-codex": {
+        "cache_read": 0.175,
+        "input": 1.75,
+        "name": "GPT-5.2-Codex",
+        "output": 14
+      },
+      "openai/gpt-5.2-pro": {
+        "input": 21,
+        "name": "GPT-5.2 Pro",
+        "output": 168
+      },
+      "openai/gpt-5.3-codex": {
+        "cache_read": 0.175,
+        "input": 1.75,
+        "name": "GPT-5.3-Codex",
+        "output": 14
+      },
+      "openai/gpt-5.4": {
+        "cache_read": 0.25,
+        "cache_read_base": 0.25,
+        "cache_read_extended": 0.5,
+        "input": 2.5,
+        "input_base": 2.5,
+        "input_extended": 5,
+        "name": "GPT-5.4",
+        "output": 15,
+        "output_base": 15,
+        "output_extended": 22.5,
+        "threshold_tokens": 200000
+      },
+      "openai/gpt-5.4-mini": {
+        "cache_read": 7.5E-8,
+        "input": 7.5E-7,
+        "name": "GPT-5.4 Mini",
+        "output": 0.0000045
+      },
+      "openai/gpt-5.4-nano": {
+        "cache_read": 2E-8,
+        "input": 2E-7,
+        "name": "GPT-5.4 Nano",
+        "output": 0.00000125
+      },
+      "openai/gpt-5.4-pro": {
+        "cache_read": 30,
+        "input": 30,
+        "name": "GPT-5.4 Pro",
+        "output": 180
+      },
+      "openai/gpt-oss-120b": {
+        "input": 0.072,
+        "name": "GPT OSS 120B",
+        "output": 0.28
+      },
+      "openai/gpt-oss-120b:exacto": {
+        "input": 0.05,
+        "name": "GPT OSS 120B (exacto)",
+        "output": 0.24
+      },
+      "openai/gpt-oss-120b:free": {
+        "input": 0,
+        "name": "gpt-oss-120b (free)",
+        "output": 0
+      },
+      "openai/gpt-oss-20b": {
+        "input": 0.05,
+        "name": "GPT OSS 20B",
+        "output": 0.2
+      },
+      "openai/gpt-oss-20b:free": {
+        "input": 0,
+        "name": "gpt-oss-20b (free)",
+        "output": 0
+      },
+      "openai/gpt-oss-safeguard-20b": {
+        "input": 0.075,
+        "name": "GPT OSS Safeguard 20B",
+        "output": 0.3
+      },
+      "openai/o4-mini": {
+        "cache_read": 0.28,
+        "input": 1.1,
+        "name": "o4 Mini",
+        "output": 4.4
+      },
+      "openrouter/free": {
+        "input": 0,
+        "name": "Free Models Router",
+        "output": 0
+      },
+      "prime-intellect/intellect-3": {
+        "input": 0.2,
+        "name": "Intellect 3",
+        "output": 1.1
+      },
+      "qwen/qwen-2.5-coder-32b-instruct": {
+        "input": 0,
+        "name": "Qwen2.5 Coder 32B Instruct",
+        "output": 0
+      },
+      "qwen/qwen2.5-vl-72b-instruct": {
+        "input": 0,
+        "name": "Qwen2.5 VL 72B Instruct",
+        "output": 0
+      },
+      "qwen/qwen3-235b-a22b-07-25": {
+        "input": 0.15,
+        "name": "Qwen3 235B A22B Instruct 2507",
+        "output": 0.85
+      },
+      "qwen/qwen3-235b-a22b-thinking-2507": {
+        "input": 0.078,
+        "name": "Qwen3 235B A22B Thinking 2507",
+        "output": 0.312
+      },
+      "qwen/qwen3-30b-a3b-instruct-2507": {
+        "input": 0.2,
+        "name": "Qwen3 30B A3B Instruct 2507",
+        "output": 0.8
+      },
+      "qwen/qwen3-30b-a3b-thinking-2507": {
+        "input": 0.2,
+        "name": "Qwen3 30B A3B Thinking 2507",
+        "output": 0.8
+      },
+      "qwen/qwen3-4b:free": {
+        "input": 0,
+        "name": "Qwen3 4B (free)",
+        "output": 0
+      },
+      "qwen/qwen3-coder": {
+        "input": 0.3,
+        "name": "Qwen3 Coder",
+        "output": 1.2
+      },
+      "qwen/qwen3-coder-30b-a3b-instruct": {
+        "input": 0.07,
+        "name": "Qwen3 Coder 30B A3B Instruct",
+        "output": 0.27
+      },
+      "qwen/qwen3-coder-flash": {
+        "input": 0.3,
+        "name": "Qwen3 Coder Flash",
+        "output": 1.5
+      },
+      "qwen/qwen3-coder:exacto": {
+        "input": 0.38,
+        "name": "Qwen3 Coder (exacto)",
+        "output": 1.53
+      },
+      "qwen/qwen3-coder:free": {
+        "input": 0,
+        "name": "Qwen3 Coder 480B A35B Instruct (free)",
+        "output": 0
+      },
+      "qwen/qwen3-max": {
+        "input": 1.2,
+        "name": "Qwen3 Max",
+        "output": 6
+      },
+      "qwen/qwen3-next-80b-a3b-instruct": {
+        "input": 0.14,
+        "name": "Qwen3 Next 80B A3B Instruct",
+        "output": 1.4
+      },
+      "qwen/qwen3-next-80b-a3b-instruct:free": {
+        "input": 0,
+        "name": "Qwen3 Next 80B A3B Instruct (free)",
+        "output": 0
+      },
+      "qwen/qwen3-next-80b-a3b-thinking": {
+        "input": 0.14,
+        "name": "Qwen3 Next 80B A3B Thinking",
+        "output": 1.4
+      },
+      "qwen/qwen3.5-397b-a17b": {
+        "input": 0.6,
+        "name": "Qwen3.5 397B A17B",
+        "output": 3.6
+      },
+      "qwen/qwen3.5-plus-02-15": {
+        "input": 0.4,
+        "name": "Qwen3.5 Plus 2026-02-15",
+        "output": 2.4
+      },
+      "sourceful/riverflow-v2-fast-preview": {
+        "input": 0,
+        "name": "Riverflow V2 Fast Preview",
+        "output": 0
+      },
+      "sourceful/riverflow-v2-max-preview": {
+        "input": 0,
+        "name": "Riverflow V2 Max Preview",
+        "output": 0
+      },
+      "sourceful/riverflow-v2-standard-preview": {
+        "input": 0,
+        "name": "Riverflow V2 Standard Preview",
+        "output": 0
+      },
+      "stepfun/step-3.5-flash": {
+        "cache_read": 0.02,
+        "input": 0.1,
+        "name": "Step 3.5 Flash",
+        "output": 0.3
+      },
+      "stepfun/step-3.5-flash:free": {
+        "input": 0,
+        "name": "Step 3.5 Flash (free)",
+        "output": 0
+      },
+      "x-ai/grok-3": {
+        "cache_read": 0.75,
+        "cache_write": 15,
+        "input": 3,
+        "name": "Grok 3",
+        "output": 15
+      },
+      "x-ai/grok-3-beta": {
+        "cache_read": 0.75,
+        "cache_write": 15,
+        "input": 3,
+        "name": "Grok 3 Beta",
+        "output": 15
+      },
+      "x-ai/grok-3-mini": {
+        "cache_read": 0.075,
+        "cache_write": 0.5,
+        "input": 0.3,
+        "name": "Grok 3 Mini",
+        "output": 0.5
+      },
+      "x-ai/grok-3-mini-beta": {
+        "cache_read": 0.075,
+        "cache_write": 0.5,
+        "input": 0.3,
+        "name": "Grok 3 Mini Beta",
+        "output": 0.5
+      },
+      "x-ai/grok-4": {
+        "cache_read": 0.75,
+        "cache_write": 15,
+        "input": 3,
+        "name": "Grok 4",
+        "output": 15
+      },
+      "x-ai/grok-4-fast": {
+        "cache_read": 0.05,
+        "cache_write": 0.05,
+        "input": 0.2,
+        "name": "Grok 4 Fast",
+        "output": 0.5
+      },
+      "x-ai/grok-4.1-fast": {
+        "cache_read": 0.05,
+        "cache_write": 0.05,
+        "input": 0.2,
+        "name": "Grok 4.1 Fast",
+        "output": 0.5
+      },
+      "x-ai/grok-4.20-beta": {
+        "cache_read": 0.2,
+        "cache_read_base": 0.2,
+        "input": 2,
+        "input_base": 2,
+        "input_extended": 4,
+        "name": "Grok 4.20 Beta",
+        "output": 6,
+        "output_base": 6,
+        "output_extended": 12,
+        "threshold_tokens": 200000
+      },
+      "x-ai/grok-4.20-multi-agent-beta": {
+        "cache_read": 0.2,
+        "cache_read_base": 0.2,
+        "input": 2,
+        "input_base": 2,
+        "input_extended": 4,
+        "name": "Grok 4.20 Multi - Agent Beta",
+        "output": 6,
+        "output_base": 6,
+        "output_extended": 12,
+        "threshold_tokens": 200000
+      },
+      "x-ai/grok-code-fast-1": {
+        "cache_read": 0.02,
+        "input": 0.2,
+        "name": "Grok Code Fast 1",
+        "output": 1.5
+      },
+      "xiaomi/mimo-v2-flash": {
+        "cache_read": 0.01,
+        "input": 0.1,
+        "name": "MiMo-V2-Flash",
+        "output": 0.3
+      },
+      "xiaomi/mimo-v2-omni": {
+        "input": 0.4,
+        "name": "MiMo-V2-Omni",
+        "output": 2
+      },
+      "xiaomi/mimo-v2-pro": {
+        "input": 1,
+        "name": "MiMo-V2-Pro",
+        "output": 3
+      },
+      "z-ai/glm-4.5": {
+        "input": 0.6,
+        "name": "GLM 4.5",
+        "output": 2.2
+      },
+      "z-ai/glm-4.5-air": {
+        "input": 0.2,
+        "name": "GLM 4.5 Air",
+        "output": 1.1
+      },
+      "z-ai/glm-4.5-air:free": {
+        "input": 0,
+        "name": "GLM 4.5 Air (free)",
+        "output": 0
+      },
+      "z-ai/glm-4.5v": {
+        "input": 0.6,
+        "name": "GLM 4.5V",
+        "output": 1.8
+      },
+      "z-ai/glm-4.6": {
+        "cache_read": 0.11,
+        "input": 0.6,
+        "name": "GLM 4.6",
+        "output": 2.2
+      },
+      "z-ai/glm-4.6:exacto": {
+        "cache_read": 0.11,
+        "input": 0.6,
+        "name": "GLM 4.6 (exacto)",
+        "output": 1.9
+      },
+      "z-ai/glm-4.7": {
+        "cache_read": 0.11,
+        "input": 0.6,
+        "name": "GLM-4.7",
+        "output": 2.2
+      },
+      "z-ai/glm-4.7-flash": {
+        "input": 0.07,
+        "name": "GLM-4.7-Flash",
+        "output": 0.4
+      },
+      "z-ai/glm-5": {
+        "cache_read": 0.2,
+        "input": 1,
+        "name": "GLM-5",
+        "output": 3.2
+      }
+    },
+    "vertex": {
+      "deepseek-ai/deepseek-v3.1-maas": {
+        "input": 0.6,
+        "name": "DeepSeek V3.1",
+        "output": 1.7
+      },
+      "gemini-2.0-flash": {
+        "cache_read": 0.025,
+        "input": 0.15,
+        "name": "Gemini 2.0 Flash",
+        "output": 0.6
+      },
+      "gemini-2.0-flash-lite": {
+        "input": 0.075,
+        "name": "Gemini 2.0 Flash Lite",
+        "output": 0.3
+      },
+      "gemini-2.5-flash": {
+        "cache_read": 0.075,
+        "cache_write": 0.383,
+        "input": 0.3,
+        "name": "Gemini 2.5 Flash",
+        "output": 2.5
+      },
+      "gemini-2.5-flash-lite": {
+        "cache_read": 0.025,
+        "input": 0.1,
+        "name": "Gemini 2.5 Flash Lite",
+        "output": 0.4
+      },
+      "gemini-2.5-flash-lite-preview-06-17": {
+        "cache_read": 0.025,
+        "input": 0.1,
+        "name": "Gemini 2.5 Flash Lite Preview 06-17",
+        "output": 0.4
+      },
+      "gemini-2.5-flash-lite-preview-09-2025": {
+        "cache_read": 0.025,
+        "input": 0.1,
+        "name": "Gemini 2.5 Flash Lite Preview 09-25",
+        "output": 0.4
+      },
+      "gemini-2.5-flash-preview-04-17": {
+        "cache_read": 0.0375,
+        "input": 0.15,
+        "name": "Gemini 2.5 Flash Preview 04-17",
+        "output": 0.6
+      },
+      "gemini-2.5-flash-preview-05-20": {
+        "cache_read": 0.0375,
+        "input": 0.15,
+        "name": "Gemini 2.5 Flash Preview 05-20",
+        "output": 0.6
+      },
+      "gemini-2.5-flash-preview-09-2025": {
+        "cache_read": 0.075,
+        "cache_write": 0.383,
+        "input": 0.3,
+        "name": "Gemini 2.5 Flash Preview 09-25",
+        "output": 2.5
+      },
+      "gemini-2.5-pro": {
+        "cache_read": 0.31,
+        "input": 1.25,
+        "name": "Gemini 2.5 Pro",
+        "output": 10
+      },
+      "gemini-2.5-pro-preview-05-06": {
+        "cache_read": 0.31,
+        "input": 1.25,
+        "name": "Gemini 2.5 Pro Preview 05-06",
+        "output": 10
+      },
+      "gemini-2.5-pro-preview-06-05": {
+        "cache_read": 0.31,
+        "input": 1.25,
+        "name": "Gemini 2.5 Pro Preview 06-05",
+        "output": 10
+      },
+      "gemini-3-flash-preview": {
+        "cache_read": 0.05,
+        "cache_read_base": 0.05,
+        "cache_read_extended": 0.05,
+        "input": 0.5,
+        "input_base": 0.5,
+        "input_extended": 0.5,
+        "name": "Gemini 3 Flash Preview",
+        "output": 3,
+        "output_base": 3,
+        "output_extended": 3,
+        "threshold_tokens": 200000
+      },
+      "gemini-3-pro-preview": {
+        "cache_read": 0.2,
+        "cache_read_base": 0.2,
+        "cache_read_extended": 0.4,
+        "input": 2,
+        "input_base": 2,
+        "input_extended": 4,
+        "name": "Gemini 3 Pro Preview",
+        "output": 12,
+        "output_base": 12,
+        "output_extended": 18,
+        "threshold_tokens": 200000
+      },
+      "gemini-3.1-pro-preview": {
+        "cache_read": 0.2,
+        "cache_read_base": 0.2,
+        "cache_read_extended": 0.4,
+        "input": 2,
+        "input_base": 2,
+        "input_extended": 4,
+        "name": "Gemini 3.1 Pro Preview",
+        "output": 12,
+        "output_base": 12,
+        "output_extended": 18,
+        "threshold_tokens": 200000
+      },
+      "gemini-3.1-pro-preview-customtools": {
+        "cache_read": 0.2,
+        "cache_read_base": 0.2,
+        "cache_read_extended": 0.4,
+        "input": 2,
+        "input_base": 2,
+        "input_extended": 4,
+        "name": "Gemini 3.1 Pro Preview Custom Tools",
+        "output": 12,
+        "output_base": 12,
+        "output_extended": 18,
+        "threshold_tokens": 200000
+      },
+      "gemini-embedding-001": {
+        "input": 0.15,
+        "name": "Gemini Embedding 001",
+        "output": 0
+      },
+      "gemini-flash-latest": {
+        "cache_read": 0.075,
+        "cache_write": 0.383,
+        "input": 0.3,
+        "name": "Gemini Flash Latest",
+        "output": 2.5
+      },
+      "gemini-flash-lite-latest": {
+        "cache_read": 0.025,
+        "input": 0.1,
+        "name": "Gemini Flash-Lite Latest",
+        "output": 0.4
+      },
+      "meta/llama-3.3-70b-instruct-maas": {
+        "input": 0.72,
+        "name": "Llama 3.3 70B Instruct",
+        "output": 0.72
+      },
+      "meta/llama-4-maverick-17b-128e-instruct-maas": {
+        "input": 0.35,
+        "name": "Llama 4 Maverick 17B 128E Instruct",
+        "output": 1.15
+      },
+      "openai/gpt-oss-120b-maas": {
+        "input": 0.09,
+        "name": "GPT OSS 120B",
+        "output": 0.36
+      },
+      "openai/gpt-oss-20b-maas": {
+        "input": 0.07,
+        "name": "GPT OSS 20B",
+        "output": 0.25
+      },
+      "qwen/qwen3-235b-a22b-instruct-2507-maas": {
+        "input": 0.22,
+        "name": "Qwen3 235B A22B Instruct",
+        "output": 0.88
+      },
+      "zai-org/glm-4.7-maas": {
+        "input": 0.6,
+        "name": "GLM-4.7",
+        "output": 2.2
+      },
+      "zai-org/glm-5-maas": {
+        "cache_read": 0.1,
+        "input": 1,
+        "name": "GLM-5",
+        "output": 3.2
+      }
+    }
+  },
+  "synced_at": "2026-03-25T00:00:00Z",
+  "version": 1
+}

@@ -1,0 +1,68 @@
+---
+title: RuntimeAgent
+description: "Concrete Agent implementation built in Rust, returned by AgentBuilder and Agent::quick."
+---
+
+`RuntimeAgent` is the concrete in-memory agent implementation. It stores a system prompt, a [`ToolRegistry`](/docs/api-reference/tool-registry), optional provider/model overrides, and the per-provider override fields applied by [`AgentBuilder`](/docs/api-reference/agent-builder).
+
+## Construction
+
+Most code should use `AgentBuilder::build()` or `Agent::quick(...)`, but direct construction is available:
+
+```rust
+pub fn new(
+    name: impl Into<String>,
+    system_prompt: impl Into<String>,
+    registry: Arc<ToolRegistry>,
+) -> Self
+```
+
+## Public methods
+
+```rust
+pub fn with_provider(self, provider: LlmProvider) -> Self
+pub fn with_model(self, model: impl Into<String>) -> Self
+pub fn provider(&self) -> Option<LlmProvider>
+pub fn model(&self) -> String
+pub fn registry(&self) -> &Arc<ToolRegistry>
+pub fn set_system_prompt(&mut self, prompt: impl Into<String>)
+pub fn add_tool(&mut self, tool: Arc<dyn Tool>)
+pub fn stream(&self, message: impl Into<String>) -> StreamBuilder<'_>
+```
+
+Notes:
+
+- `model()` falls back to `"openai/gpt-5"` when no override is set.
+- `provider()` returns only the agent-level override, not the resolved runtime provider after config/env merging.
+- `stream(...)` is just a convenience wrapper around the trait-based streaming runtime.
+
+## Trait behavior
+
+`RuntimeAgent` implements [`Agent`](/docs/api-reference/agent-trait) and overrides:
+
+- `name()`
+- `provider()`
+- `apply_config_overrides(&mut AppConfig)`
+- `required_completion_tools()`
+- `max_continuations()`
+- `continuation_message()`
+- `system_prompt()`
+- `available_tools()`
+- `execute_tool(...)`
+
+The run/continue methods use the default runtime implementations from `src/agent/runtime.rs`.
+
+## Example
+
+```rust
+use appam::prelude::*;
+
+let mut agent = Agent::quick("openai/gpt-5", "You are helpful.", vec![])?;
+agent.set_system_prompt("You are a careful reviewer.");
+
+agent
+    .stream("Review this function")
+    .on_content(|text| print!("{}", text))
+    .run()
+    .await?;
+```

@@ -1,0 +1,296 @@
+---
+title: Agent Trait
+description: The core Agent trait that defines the agent interface.
+---
+
+The `Agent` trait is the foundational abstraction in Appam. Every agent type -- `RuntimeAgent`, `TomlAgent`, or your own custom implementation -- implements this trait. It defines the contract between agent logic and the runtime that orchestrates LLM conversations, tool execution, and session management.
+
+## Trait Definition
+
+```rust
+#[async_trait]
+pub trait Agent: Send + Sync {
+    fn name(&self) -> &str;
+    fn provider(&self) -> Option<LlmProvider>;
+    fn apply_config_overrides(&self, _cfg: &mut AppConfig) {}
+    fn required_completion_tools(&self) -> Option<&Vec<String>>;
+    fn max_continuations(&self) -> usize;
+    fn continuation_message(&self) -> Option<&str>;
+    fn system_prompt(&self) -> Result<String>;
+    fn available_tools(&self) -> Result<Vec<ToolSpec>>;
+    fn execute_tool(&self, name: &str, args: serde_json::Value) -> Result<serde_json::Value>;
+    async fn run(&self, user_prompt: &str) -> Result<Session>;
+    async fn run_streaming(
+        &self,
+        user_prompt: &str,
+        consumer: Box<dyn StreamConsumer>,
+    ) -> Result<Session>;
+    async fn run_with_consumers(
+        &self,
+        user_prompt: &str,
+        consumers: Vec<Box<dyn StreamConsumer>>,
+    ) -> Result<Session>;
+    fn initial_messages(&self, user_prompt: &str) -> Result<Vec<ChatMessage>>;
+    async fn continue_session(&self, session_id: &str, user_prompt: &str) -> Result<Session>;
+    async fn continue_session_streaming(
+        &self,
+        session_id: &str,
+        user_prompt: &str,
+        consumer: Box<dyn StreamConsumer>,
+    ) -> Result<Session>;
+}
+```
+
+The trait requires `Send + Sync` bounds, enabling agents to be used in async runtimes and shared across threads.
+
+## Required Methods
+
+These methods must be implemented by every agent.
+
+### `name()`
+
+```rust
+fn name(&self) -> &str;
+```
+
+Returns the unique identifier for this agent. Used in session metadata, logging, and trace output.
+
+### `system_prompt()`
+
+```rust
+fn system_prompt(&self) -> Result<String>;
+```
+
+Returns the full system prompt that defines the agent's personality, capabilities, instructions, and constraints. This is sent as the first message in every conversation.
+
+Returns `Result<String>` because the prompt may be loaded from a file at call time. Implementations that hold the prompt in memory can simply return `Ok(self.prompt.clone())`.
+
+### `available_tools()`
+
+```rust
+fn available_tools(&self) -> Result<Vec<ToolSpec>>;
+```
+
+Returns the set of tool specifications available to this agent. These are sent to the LLM as function definitions. The LLM uses the tool names, descriptions, and JSON Schemas to decide when and how to invoke tools.
+
+Returns `Result` because tool specs may be loaded or generated dynamically.
+
+## Methods with Default Implementations
+
+Override only the methods you need. All default implementations are provided by the runtime module.
+
+### `provider()`
+
+```rust
+fn provider(&self) -> Option<LlmProvider> {
+    None // Default: use global config
+}
+```
+
+Returns the provider override for this agent. When `Some(provider)`, this agent uses the specified provider regardless of the global configuration. When `None` (default), the global provider from `AppConfig` is used.
+
+### `apply_config_overrides()`
+
+```rust
+fn apply_config_overrides(&self, _cfg: &mut AppConfig) {}
+```
+
+Applies agent-specific configuration overrides to the global config before each run. This is called by the runtime before creating the LLM client. `RuntimeAgent` uses this to apply all builder-configured settings (model, API keys, temperature, thinking, caching, etc.).
+
+The default implementation does nothing.
+
+### `execute_tool()`
+
+```rust
+fn execute_tool(&self, name: &str, _args: serde_json::Value) -> Result<serde_json::Value> {
+    Err(anyhow::anyhow!("Tool not found: {}", name))
+}
+```
+
+Resolves a tool by name and executes it with the given arguments. The runtime calls this when the LLM emits a tool call. Arguments are a JSON value matching the tool's input schema.
+
+The default implementation returns a "Tool not found" error. Both `RuntimeAgent` and `TomlAgent` override this to delegate to their `ToolRegistry`.
+
+### `run()`
+
+```rust
+async fn run(&self, user_prompt: &str) -> Result<Session>;
+```
+
+Runs the agent with a user prompt and streams output to the console with default formatting (via `ConsoleConsumer`).
+
+The orchestration loop:
+
+1. Builds initial messages (system + user) via `initial_messages()`
+2. Streams LLM response with tool calling
+3. Executes requested tools via `execute_tool()`
+4. Continues until the LLM stops requesting tools
+5. Optionally auto-continues if required completion tools were not called
+6. Returns session metadata including full conversation history and usage
+
+### `run_streaming()`
+
+```rust
+async fn run_streaming(
+    &self,
+    user_prompt: &str,
+    consumer: Box<dyn StreamConsumer>,
+) -> Result<Session>;
+```
+
+Like `run()`, but streams events to the provided consumer instead of the console. Use this for web streaming (SSE), custom logging, metrics collection, or any custom output handling.
+
+```rust
+use appam::prelude::*;
+
+let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+let consumer = ChannelConsumer::new(tx);
+
+agent.run_streaming("Hello!", Box::new(consumer)).await?;
+```
+
+### `run_with_consumers()`
+
+```rust
+async fn run_with_consumers(
+    &self,
+    user_prompt: &str,
+    consumers: Vec<Box<dyn StreamConsumer>>,
+) -> Result<Session>;
+```
+
+Broadcasts events to multiple consumers simultaneously. Internally wraps the consumers in a `MultiConsumer`. If any consumer returns an error, propagation stops and the error is returned.
+
+```rust
+agent.run_with_consumers("Hello!", vec![
+    Box::new(ConsoleConsumer::new()),
+    Box::new(ChannelConsumer::new(tx)),
+]).await?;
+```
+
+### `initial_messages()`
+
+```rust
+fn initial_messages(&self, user_prompt: &str) -> Result<Vec<ChatMessage>>;
+```
+
+Builds the initial message list for a conversation. The default implementation creates a system message (from `system_prompt()`) and a user message. Override this to inject few-shot examples, context, or custom message structures.
+
+### `continue_session()`
+
+```rust
+async fn continue_session(&self, session_id: &str, user_prompt: &str) -> Result<Session>;
+```
+
+Continues an existing session by loading its history from the database and appending a new user message. Streams output to the console with default formatting.
+
+Requires session history to be enabled in configuration. Returns an error if the session ID does not exist.
+
+### `continue_session_streaming()`
+
+```rust
+async fn continue_session_streaming(
+    &self,
+    session_id: &str,
+    user_prompt: &str,
+    consumer: Box<dyn StreamConsumer>,
+) -> Result<Session>;
+```
+
+Like `continue_session()`, but streams events to a custom consumer.
+
+### `required_completion_tools()`
+
+```rust
+fn required_completion_tools(&self) -> Option<&Vec<String>> {
+    None
+}
+```
+
+Returns the list of tools that must be called before the session completes. When `Some`, the runtime automatically injects a continuation message if the session ends without calling any of these tools. When `None` (default), no forced tool usage is applied.
+
+### `max_continuations()`
+
+```rust
+fn max_continuations(&self) -> usize {
+    2
+}
+```
+
+Returns the maximum number of continuation attempts. Limits how many times the runtime will inject continuation messages before giving up. Default is `2`.
+
+### `continuation_message()`
+
+```rust
+fn continuation_message(&self) -> Option<&str> {
+    None
+}
+```
+
+Returns the custom continuation message. When `Some`, this message is injected when the session ends without calling required tools. When `None` (default), a generic default message is used.
+
+## RuntimeAgent-Specific: `stream()`
+
+While not part of the `Agent` trait, `RuntimeAgent` provides an additional method for closure-based streaming:
+
+```rust
+impl RuntimeAgent {
+    pub fn stream(&self, message: impl Into<String>) -> StreamBuilder<'_>;
+}
+```
+
+Returns a `StreamBuilder` that allows registering closure handlers for content, reasoning, tool calls, errors, and completion events. See [StreamBuilder](/docs/api-reference/stream-builder) for details.
+
+```rust
+agent
+    .stream("Hello")
+    .on_content(|text| print!("{}", text))
+    .on_tool_call(|name, args| println!("Tool: {} ({})", name, args))
+    .on_done(|| println!("\nDone!"))
+    .run()
+    .await?;
+```
+
+## Implementing the Trait
+
+For most use cases, `AgentBuilder`, `Agent::quick()`, or `TomlAgent` are sufficient. If you need custom orchestration logic, implement the trait directly:
+
+```rust
+use appam::prelude::*;
+
+struct MyAgent {
+    name: String,
+    system_prompt: String,
+    registry: Arc<ToolRegistry>,
+}
+
+impl Agent for MyAgent {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn system_prompt(&self) -> Result<String> {
+        Ok(self.system_prompt.clone())
+    }
+
+    fn available_tools(&self) -> Result<Vec<ToolSpec>> {
+        let mut specs = Vec::new();
+        for name in self.registry.list() {
+            if let Some(tool) = self.registry.resolve(&name) {
+                specs.push(tool.spec()?);
+            }
+        }
+        Ok(specs)
+    }
+
+    fn execute_tool(&self, name: &str, args: Value) -> Result<Value> {
+        self.registry.execute(name, args)
+    }
+}
+```
+
+All `run*` and `continue_session*` methods have default implementations provided by `runtime::default_run`, `runtime::default_run_streaming`, `runtime::continue_session_run`, and `runtime::continue_session_streaming`. You only need to override them for truly custom orchestration.
+
+## Source
+
+Defined in [`src/agent/mod.rs`](https://github.com/winfunc/appam/blob/main/src/agent/mod.rs).

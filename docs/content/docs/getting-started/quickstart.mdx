@@ -1,0 +1,159 @@
+---
+title: Quickstart
+description: Build your first Appam agent and understand how the same runtime scales to long-horizon, traceable, concurrent workloads.
+---
+
+This quickstart uses the smallest possible agent shape, but it exercises the same runtime Appam is designed for in production-style workloads with concurrent execution, trace emission, session persistence, and configurable continuation behavior.
+
+## Create a New Project
+
+```bash
+cargo new my-agent
+cd my-agent
+```
+
+Add dependencies to `Cargo.toml`:
+
+```toml
+[dependencies]
+appam = "0.1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+```
+
+## The Simplest Agent
+
+Replace `src/main.rs` with:
+
+```rust
+use appam::prelude::*;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let agent = Agent::quick(
+        "anthropic/claude-sonnet-4-5",
+        "You are a helpful assistant.",
+        vec![],
+    )?;
+
+    agent
+        .stream("Hello!")
+        .on_content(|text| print!("{}", text))
+        .run()
+        .await?;
+
+    println!();
+    Ok(())
+}
+```
+
+Run it (make sure `ANTHROPIC_API_KEY` is set):
+
+```bash
+cargo run
+```
+
+The agent streams its response token-by-token to your terminal.
+
+That streaming surface is not just for CLI output. The same event pipeline powers trace consumers, web streaming, persistence hooks, and operational instrumentation for long-running jobs.
+
+## How It Works
+
+`Agent::quick()` takes three arguments:
+
+1. **Model string** -- identifies both the provider and the model.
+2. **System prompt** -- instructions that shape the agent's behavior.
+3. **Tools** -- a `Vec<Arc<dyn Tool>>` of tools the agent can call (empty here).
+
+The `.stream()` method returns a `StreamBuilder` that lets you attach closures to handle events as they arrive. `.run()` executes the agent loop and returns a `Session` with conversation metadata.
+
+## Model String Format
+
+The model string uses the format `provider/model-name`. Appam auto-detects the provider from the prefix:
+
+| Model string | Provider detected |
+|---|---|
+| `anthropic/claude-sonnet-4-5` | Anthropic Messages API |
+| `anthropic/claude-opus-4` | Anthropic Messages API |
+| `openai/gpt-4o` | OpenAI Responses API |
+| `openai-codex/gpt-5.4` | OpenAI Codex Responses API |
+| `openai/o3-pro` | OpenAI Responses API |
+| `openrouter/anthropic/claude-sonnet-4-5` | OpenRouter Responses API |
+| `vertex/gemini-2.5-flash` | Google Vertex AI |
+| `gemini-2.5-pro` | Google Vertex AI |
+
+You can also use bare model names like `claude-sonnet-4-5` or `gpt-4o` -- Appam recognizes common prefixes and routes to the correct provider. Unrecognized model strings fall back to OpenRouter Responses.
+
+## Switching Providers
+
+Changing providers is a one-line edit. Swap the model string and set the corresponding environment variable:
+
+```rust
+// Anthropic
+let agent = Agent::quick("anthropic/claude-sonnet-4-5", "You are helpful.", vec![])?;
+
+// OpenAI
+let agent = Agent::quick("openai/gpt-4o", "You are helpful.", vec![])?;
+
+// OpenAI Codex
+let agent = Agent::quick("openai-codex/gpt-5.4", "You are helpful.", vec![])?;
+
+// OpenRouter (can proxy to any model)
+let agent = Agent::quick("openrouter/anthropic/claude-sonnet-4-5", "You are helpful.", vec![])?;
+
+// Google Vertex
+let agent = Agent::quick("gemini-2.5-flash", "You are helpful.", vec![])?;
+```
+
+The streaming API and tool system remain identical across all providers.
+
+## StreamBuilder Callbacks
+
+The `StreamBuilder` supports synchronous and async callbacks for fine-grained control over the streaming output:
+
+```rust
+agent
+    .stream("Explain the Rust ownership model")
+    .on_session_started(|session_id| {
+        println!("session: {}", session_id);
+    })
+    .on_content(|text| {
+        // Called for each chunk of generated text
+        print!("{}", text);
+    })
+    .on_reasoning(|thinking| {
+        // Called for reasoning/thinking tokens (models that support extended thinking)
+        eprint!("{}", thinking);
+    })
+    .on_tool_call(|name, args| {
+        // Called when the model invokes a tool
+        println!("[Calling tool: {} with {}]", name, args);
+    })
+    .on_tool_result(|name, result| {
+        // Called when a tool returns its result
+        println!("[Tool {} returned: {}]", name, result);
+    })
+    .on_tool_failed(|name, error| {
+        // Called when a tool execution fails
+        eprintln!("[Tool {} failed: {}]", name, error);
+    })
+    .on_error(|error| {
+        // Called on streaming errors
+        eprintln!("Error: {}", error);
+    })
+    .on_done(|| {
+        // Called when the stream completes
+        println!("\nDone.");
+    })
+    .run()
+    .await?;
+```
+
+All callbacks are optional. You only need to attach the ones you care about.
+
+If you need side effects such as writing tool activity to a database, `StreamBuilder` also exposes `on_tool_call_async(...)` and `on_tool_result_async(...)`.
+
+The returned `Session` includes fields such as `session_id`, `agent_name`, `model`, the full `messages` history, and aggregated `usage` when the provider reports it.
+
+## Next Steps
+
+You now have a working agent with streaming output. To give it real capabilities, continue to [Your First Agent with Tools](/docs/getting-started/first-agent).

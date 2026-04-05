@@ -1,0 +1,95 @@
+---
+title: Session Persistence
+description: Persist agent sessions in SQLite and continue them across runs.
+---
+
+Appam exposes two related pieces here:
+
+- `AgentBuilder` history settings, which the runtime uses for `run()` and `continue_session()`
+- `SessionHistory`, which gives you manual listing, loading, deletion, and retention control
+
+## Enable History on the Agent
+
+If you want `continue_session()` to work, the agent itself must be configured with history enabled:
+
+```rust
+use appam::prelude::*;
+
+let agent = AgentBuilder::new("my-agent")
+    .provider(LlmProvider::OpenAI)
+    .model("gpt-5.4")
+    .system_prompt("You are a helpful assistant.")
+    .enable_history()
+    .history_db_path("data/sessions.db")
+    .auto_save_sessions(true)
+    .build()?;
+```
+
+The same settings can also live in global config:
+
+```toml
+[history]
+enabled = true
+db_path = "data/sessions.db"
+auto_save = true
+max_sessions = 100
+```
+
+## Continue a Session
+
+```rust
+let first = agent.run("What is Rust?").await?;
+
+let second = agent
+    .continue_session(&first.session_id, "How does ownership work?")
+    .await?;
+```
+
+The runtime loads the prior session from the configured history database. A standalone `SessionHistory` instance does not automatically wire itself into `continue_session()` unless the agent points at the same database.
+
+## Manual SessionHistory Usage
+
+Use `SessionHistory` when you need direct database operations:
+
+```rust
+use appam::prelude::*;
+
+let mut config = HistoryConfig::default();
+config.enabled = true;
+config.db_path = "data/sessions.db".into();
+
+let history = SessionHistory::new(config).await?;
+let sessions = history.list_sessions().await?;
+```
+
+### Common Operations
+
+```rust
+let loaded = history.load_session("session-id").await?;
+let deleted = history.delete_session("session-id").await?;
+let removed = history.enforce_max_sessions().await?;
+```
+
+## Data Shapes
+
+`appam::agent::Session` stores:
+
+- `session_id`
+- `agent_name`
+- `model`
+- `messages`
+- `started_at`
+- `ended_at`
+- `usage`
+
+`appam::agent::history::SessionSummary` stores:
+
+- `id`
+- `agent_name`
+- `model`
+- `message_count`
+- `turn_count`
+- `tool_call_count`
+- `started_at`
+- `updated_at`
+- `ended_at`

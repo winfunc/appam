@@ -1,0 +1,123 @@
+---
+title: LlmClient
+description: Trait for provider-specific LLM API implementations.
+---
+
+## Overview
+
+`LlmClient` is the unified interface that all provider-specific LLM clients implement. It defines a single streaming method with callback-based event handling, enabling the agent runtime to work with any provider through the same API surface.
+
+You typically do not implement this trait directly -- use the built-in provider clients (`AnthropicClient`, `OpenAIClient`, `OpenAICodexClient`, `OpenRouterCompletionsClient`, `OpenRouterClient`, `VertexClient`) or the [DynamicLlmClient](/docs/api-reference/dynamic-llm-client) wrapper for runtime dispatch.
+
+## Definition
+
+```rust
+#[async_trait]
+pub trait LlmClient: Send + Sync {
+    async fn chat_with_tools_streaming<
+        FContent,
+        FTool,
+        FReason,
+        FToolPartial,
+        FContentBlock,
+        FUsage,
+    >(
+        &self,
+        messages: &[UnifiedMessage],
+        tools: &[UnifiedTool],
+        on_content: FContent,
+        on_tool_calls: FTool,
+        on_reasoning: FReason,
+        on_tool_calls_partial: FToolPartial,
+        on_content_block_complete: FContentBlock,
+        on_usage: FUsage,
+    ) -> Result<()>
+    where
+        FContent: FnMut(&str) -> Result<()> + Send,
+        FTool: FnMut(Vec<UnifiedToolCall>) -> Result<()> + Send,
+        FReason: FnMut(&str) -> Result<()> + Send,
+        FToolPartial: FnMut(&[UnifiedToolCall]) -> Result<()> + Send,
+        FContentBlock: FnMut(UnifiedContentBlock) -> Result<()> + Send,
+        FUsage: FnMut(UnifiedUsage) -> Result<()> + Send;
+
+    fn provider_name(&self) -> &str;
+}
+```
+
+## Required Methods
+
+### `chat_with_tools_streaming`
+
+Sends a conversation to the LLM and streams the response through callbacks. This is the core method that drives every agent interaction.
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `messages` | `&[UnifiedMessage]` | Conversation history in unified format (system, user, assistant, tool results) |
+| `tools` | `&[UnifiedTool]` | Tool specifications the LLM can invoke |
+| `on_content` | `FnMut(&str) -> Result<()>` | Called for each chunk of generated text |
+| `on_tool_calls` | `FnMut(Vec<UnifiedToolCall>) -> Result<()>` | Called when tool calls are finalized with complete arguments |
+| `on_reasoning` | `FnMut(&str) -> Result<()>` | Called for reasoning/thinking tokens (text only, for streaming display) |
+| `on_tool_calls_partial` | `FnMut(&[UnifiedToolCall]) -> Result<()>` | Called for incremental tool call updates during streaming |
+| `on_content_block_complete` | `FnMut(UnifiedContentBlock) -> Result<()>` | Called when a complete content block is finalized (preserves signatures and structured data) |
+| `on_usage` | `FnMut(UnifiedUsage) -> Result<()>` | Called at completion with token usage statistics |
+
+**Returns:** `Result<()>` -- succeeds when the full response has been streamed, or returns an error on failure.
+
+### `provider_name`
+
+Returns the provider name string for logging and debugging.
+
+```rust
+fn provider_name(&self) -> &str;
+```
+
+## Conversation Flow
+
+The streaming callback sequence follows this pattern:
+
+1. **Text generation** -- `on_content` is called repeatedly with text chunks as the LLM generates its response.
+2. **Reasoning** -- `on_reasoning` is called with thinking tokens for models that support extended thinking (e.g., Claude with thinking enabled, o-series models). These arrive interleaved with or before content.
+3. **Content blocks** -- `on_content_block_complete` is called when a complete block (text, thinking with signature, etc.) is finalized. This preserves structured data that the text-only callbacks cannot represent.
+4. **Tool calls** -- if the LLM decides to invoke tools:
+   - `on_tool_calls_partial` is called with incremental updates as arguments stream in
+   - `on_tool_calls` is called once with the finalized tool calls and complete arguments
+5. **Usage** -- `on_usage` is called at the end of the response with token counts.
+
+The caller (agent runtime) then executes any requested tools, appends results to the message history, and calls `chat_with_tools_streaming` again. This loop continues until the LLM stops requesting tools.
+
+## Thread Safety
+
+All implementations must be `Send + Sync` for use in async contexts. The trait bound `Send + Sync` is enforced at the trait level.
+
+## Error Handling
+
+Implementations return errors for:
+
+- Authentication failures (missing or invalid API keys)
+- Network request failures
+- API error responses (rate limits, content policy, server errors)
+- Response parsing failures
+- Callback errors (if any callback returns `Err`, the stream is aborted)
+
+## Built-in Implementations
+
+| Client | Provider | Module |
+|--------|----------|--------|
+| `AnthropicClient` | Anthropic Messages API | `appam::llm::anthropic` |
+| `OpenAIClient` | OpenAI Responses API | `appam::llm::openai` |
+| `OpenAICodexClient` | OpenAI Codex subscription-backed Responses API | `appam::llm::openai_codex` |
+| `OpenRouterCompletionsClient` | OpenRouter Completions API | `appam::llm::openrouter::completions` |
+| `OpenRouterClient` | OpenRouter Responses API | `appam::llm::openrouter::responses` |
+| `VertexClient` | Google Vertex AI Gemini API | `appam::llm::vertex` |
+| `DynamicLlmClient` | Runtime dispatch to any provider | `appam::llm::provider` |
+
+Azure OpenAI uses `OpenAIClient` with Azure-specific configuration. Azure Anthropic and Bedrock both use `AnthropicClient` with transport-specific configuration.
+
+## Related Types
+
+- [DynamicLlmClient](/docs/api-reference/dynamic-llm-client) -- enum wrapper that delegates to the correct provider client
+- [LlmProvider](/docs/api-reference/llm-provider) -- selects which client implementation to use
+- [UnifiedMessage](/docs/api-reference/unified-message) -- the message format passed to `chat_with_tools_streaming`
+- [StreamConsumer](/docs/api-reference/stream-consumer) -- higher-level abstraction that receives stream events from the agent runtime

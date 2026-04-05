@@ -1,0 +1,143 @@
+---
+title: TraceConsumer
+description: Stream consumer that writes structured JSON trace files for debugging and analysis.
+---
+
+## Overview
+
+`TraceConsumer` writes every streaming event as a JSON line to a `.jsonl` trace file. Each entry includes a timestamp, elapsed time from session start, event type, and event-specific data. Files are flushed immediately after each write for real-time visibility -- you can `tail -f` a trace file while the agent runs.
+
+**Import path:** `appam::agent::consumers::TraceConsumer`
+
+## Definition
+
+```rust
+pub struct TraceConsumer {
+    writer: Arc<Mutex<BufWriter<File>>>,
+    format: TraceFormat,
+    start_time: Instant,
+}
+```
+
+## Constructor
+
+### `TraceConsumer::new`
+
+```rust
+pub fn new(logs_dir: &Path, session_id: &str, format: TraceFormat) -> Result<Self>
+```
+
+Creates a trace file at `<logs_dir>/session-<session_id>.jsonl`. The directory is created if it does not exist. The file is opened in append mode to support session continuation.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `logs_dir` | `&Path` | Directory where trace files are written. Created if missing. |
+| `session_id` | `&str` | Unique session identifier, used in the filename. |
+| `format` | `TraceFormat` | Detail level: `Compact` or `Detailed`. |
+
+**Errors:** Returns an error if the directory cannot be created or the file cannot be opened.
+
+## Trace Format
+
+The `TraceFormat` enum controls how much data is recorded:
+
+| Format | Reasoning events | Tool call results |
+|--------|-----------------|-------------------|
+| `TraceFormat::Compact` | Excluded | Only tool name, success, duration (no result body) |
+| `TraceFormat::Detailed` | Included | Full result body, tool name, success, duration |
+
+## Output Format
+
+Each line in the `.jsonl` file is a self-contained JSON object:
+
+```json
+{"timestamp":"2025-10-24T10:30:45.123Z","elapsed_ms":0.0,"type":"session_started","data":{"session_id":"abc-123"}}
+{"timestamp":"2025-10-24T10:30:45.456Z","elapsed_ms":333.0,"type":"content","data":{"content":"Hello, world!"}}
+{"timestamp":"2025-10-24T10:30:46.789Z","elapsed_ms":1666.0,"type":"tool_call_started","data":{"tool_name":"read_file","arguments":"{\"path\":\"src/main.rs\"}"}}
+{"timestamp":"2025-10-24T10:30:46.801Z","elapsed_ms":1678.0,"type":"tool_call_completed","data":{"tool_name":"read_file","result":{"output":"fn main() {}"},"success":true,"duration_ms":12.3}}
+{"timestamp":"2025-10-24T10:30:47.000Z","elapsed_ms":1877.0,"type":"done","data":{"total_elapsed_ms":1877.0}}
+```
+
+### Event type mapping
+
+| StreamEvent variant | Trace `type` value |
+|--------------------|--------------------|
+| `SessionStarted` | `session_started` |
+| `Content` | `content` |
+| `Reasoning` | `reasoning` (Detailed only) |
+| `ToolCallStarted` | `tool_call_started` |
+| `ToolCallCompleted` | `tool_call_completed` |
+| `ToolCallFailed` | `tool_call_failed` |
+| `TurnCompleted` | `turn_completed` |
+| `UsageUpdate` | `usage_update` |
+| `Done` | `done` |
+| `Error` | `error` |
+
+## Usage
+
+### Standalone trace
+
+```rust
+use appam::prelude::*;
+use appam::agent::consumers::TraceConsumer;
+use appam::config::TraceFormat;
+use std::path::Path;
+
+let agent = Agent::quick("anthropic/claude-sonnet-4-5", "You are helpful.", vec![])?;
+
+let trace = TraceConsumer::new(
+    Path::new("./logs"),
+    "my-session",
+    TraceFormat::Detailed,
+)?;
+
+agent.run_streaming("Hello!", Box::new(trace)).await?;
+// Trace file: ./logs/session-my-session.jsonl
+```
+
+### Combined with console output
+
+```rust
+use appam::agent::streaming::MultiConsumer;
+use appam::agent::consumers::{ConsoleConsumer, TraceConsumer};
+use appam::config::TraceFormat;
+use std::path::Path;
+
+let trace = TraceConsumer::new(Path::new("logs"), "debug-session", TraceFormat::Detailed)?;
+
+let multi = MultiConsumer::new()
+    .add(Box::new(ConsoleConsumer::new()))
+    .add(Box::new(trace));
+
+agent.run_streaming("Explain Rust lifetimes", Box::new(multi)).await?;
+```
+
+### Compact traces for production
+
+Use `TraceFormat::Compact` to reduce trace file size by excluding reasoning tokens and full tool results:
+
+```rust
+let trace = TraceConsumer::new(
+    Path::new("/var/log/agents"),
+    &session_id,
+    TraceFormat::Compact,
+)?;
+```
+
+## Analyzing Traces
+
+Trace files are standard JSONL, compatible with `jq`, pandas, and other tools:
+
+```bash
+# Watch events in real time
+tail -f logs/session-my-session.jsonl | jq .
+
+# Count events by type
+cat logs/session-my-session.jsonl | jq -r .type | sort | uniq -c
+
+# Extract all content
+cat logs/session-my-session.jsonl | jq -r 'select(.type == "content") | .data.content' | tr -d '\n'
+
+# Total elapsed time
+tail -1 logs/session-my-session.jsonl | jq .data.total_elapsed_ms
+```

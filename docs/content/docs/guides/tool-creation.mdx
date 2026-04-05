@@ -1,0 +1,245 @@
+---
+title: Tool Creation
+description: Create custom tools using the Tool trait, macros, or closures.
+---
+
+Tools are executable functions that agents can invoke during conversations. Appam provides several ways to create tools, from manual trait implementation to zero-boilerplate macros and inline closures.
+
+## The `Tool` Trait
+
+Every tool in Appam implements the `Tool` trait, which requires three methods:
+
+```rust
+pub trait Tool: Send + Sync {
+    /// Unique name used for routing LLM tool calls.
+    fn name(&self) -> &str;
+
+    /// Tool specification with JSON Schema for the LLM.
+    fn spec(&self) -> Result<ToolSpec>;
+
+    /// Execute the tool with JSON arguments and return a JSON result.
+    fn execute(&self, args: serde_json::Value) -> Result<serde_json::Value>;
+}
+```
+
+The trait is `Send + Sync`, so tools can be shared safely across async tasks and threads.
+
+### ToolSpec Structure
+
+`ToolSpec` describes the tool for the LLM:
+
+```rust
+pub struct ToolSpec {
+    pub type_field: String,       // Always "function"
+    pub name: String,             // Matches Tool::name()
+    pub description: String,      // Human-readable description for the LLM
+    pub parameters: serde_json::Value, // JSON Schema for input validation
+    pub strict: Option<bool>,     // Optional strict mode
+}
+```
+
+## Manual Implementation
+
+For full control, implement the `Tool` trait directly:
+
+```rust
+use appam::prelude::*;
+
+struct SearchTool;
+
+impl Tool for SearchTool {
+    fn name(&self) -> &str {
+        "search"
+    }
+
+    fn spec(&self) -> Result<ToolSpec> {
+        Ok(serde_json::from_value(json!({
+            "type": "function",
+            "name": "search",
+            "description": "Search a knowledge base for relevant documents",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query"
+                    },
+                    "limit": {
+                        "type": "number",
+                        "description": "Maximum number of results"
+                    }
+                },
+                "required": ["query"]
+            }
+        }))?)
+    }
+
+    fn execute(&self, args: Value) -> Result<Value> {
+        let query = args["query"].as_str().unwrap_or_default();
+        let limit = args["limit"].as_u64().unwrap_or(10);
+
+        // Your search logic here
+        Ok(json!({
+            "output": format!("Found {} results for: {}", limit, query)
+        }))
+    }
+}
+```
+
+## Using the `#[tool]` Macro (Recommended)
+
+The `#[tool]` attribute macro eliminates boilerplate by generating the `Tool` implementation from an annotated function. For detailed usage, see [The #[tool] Macro](/docs/guides/tool-macro).
+
+### With Inline Parameters
+
+For tools with simple parameters, annotate them directly with `#[arg]`:
+
+```rust
+use appam::prelude::*;
+
+#[tool(description = "Multiply two numbers")]
+fn multiply(
+    #[arg(description = "First number")] a: f64,
+    #[arg(description = "Second number")] b: f64,
+) -> Result<f64> {
+    Ok(a * b)
+}
+
+// Generates `Multiply` struct implementing Tool
+// Use: Arc::new(multiply()) or AgentBuilderToolExt::tool(multiply())
+```
+
+### With a Typed Input Struct
+
+For complex inputs, use `#[derive(Schema, Deserialize)]` on a struct:
+
+```rust
+use appam::prelude::*;
+
+#[derive(Deserialize, Schema)]
+struct ReadFileInput {
+    #[description = "Path to the file to read"]
+    path: String,
+}
+
+#[tool(description = "Read the contents of a file from disk")]
+fn read_file(input: ReadFileInput) -> Result<String> {
+    let content = std::fs::read_to_string(&input.path)?;
+    Ok(content)
+}
+
+// Generates `ReadFile` struct implementing Tool
+```
+
+## Using `ClosureTool`
+
+For quick inline tools, use `ClosureTool::new()` without defining a struct:
+
+```rust
+use appam::prelude::*;
+use appam::tools::register::ClosureTool;
+
+let tool = ClosureTool::new(
+    "echo",
+    serde_json::from_value(json!({
+        "type": "function",
+        "name": "echo",
+        "description": "Echo back the input message",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "message": { "type": "string", "description": "Message to echo" }
+            },
+            "required": ["message"]
+        }
+    }))?,
+    |args: Value| {
+        let msg = args["message"].as_str().unwrap_or_default();
+        Ok(json!({ "output": msg }))
+    },
+);
+```
+
+## Using `ToolRegistryExt::register_fn`
+
+Register closure-based tools directly on a `ToolRegistry`:
+
+```rust
+use appam::prelude::*;
+
+let registry = ToolRegistry::new();
+registry.register_fn(
+    "greet",
+    serde_json::from_value(json!({
+        "type": "function",
+        "name": "greet",
+        "description": "Greet someone by name",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": { "type": "string", "description": "Name to greet" }
+            },
+            "required": ["name"]
+        }
+    }))?,
+    |args: Value| {
+        let name = args["name"].as_str().unwrap_or("world");
+        Ok(json!({ "output": format!("Hello, {}!", name) }))
+    },
+);
+```
+
+## Registering Tools with Agents
+
+### Using `AgentBuilder::with_tool`
+
+The standard approach wraps the tool in `Arc`:
+
+```rust
+let agent = AgentBuilder::new("my-agent")
+    .provider(LlmProvider::Anthropic)
+    .model("claude-sonnet-4-5")
+    .system_prompt("You are a helpful assistant.")
+    .with_tool(Arc::new(SearchTool))
+    .with_tool(Arc::new(multiply()))
+    .build()?;
+```
+
+### Using `AgentBuilderToolExt::tool` (No `Arc` Needed)
+
+The `tool()` extension method wraps the tool in `Arc` automatically:
+
+```rust
+use appam::prelude::*;
+
+let agent = AgentBuilder::new("my-agent")
+    .provider(LlmProvider::Anthropic)
+    .model("claude-sonnet-4-5")
+    .system_prompt("You are a helpful assistant.")
+    .tool(multiply())    // No Arc::new() needed
+    .tool(read_file())
+    .build()?;
+```
+
+### Using `with_tools` for Multiple Tools at Once
+
+```rust
+let agent = AgentBuilder::new("my-agent")
+    .system_prompt("You are a helpful assistant.")
+    .with_tools(vec![
+        Arc::new(multiply()),
+        Arc::new(read_file()),
+        Arc::new(SearchTool),
+    ])
+    .build()?;
+```
+
+## Choosing an Approach
+
+| Approach | Best For |
+|----------|----------|
+| `#[tool]` + `#[derive(Schema)]` | Most tools. Schema derived from Rust types with minimal boilerplate. |
+| `#[tool]` + `#[arg]` | Simple tools with a few parameters. |
+| Manual `impl Tool` | Full control over spec loading (e.g., from JSON files). |
+| `ClosureTool` | Quick prototyping, one-off tools, or dynamic tool creation. |
+| `register_fn` | Adding tools to an existing `ToolRegistry` inline. |

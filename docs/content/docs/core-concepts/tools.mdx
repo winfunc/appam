@@ -1,0 +1,270 @@
+---
+title: Tools
+description: The flexible tool system with macro-based, closure-based, and TOML-defined tools.
+---
+
+## The Tool Trait
+
+Tools are executable functions that agents expose to the LLM. When the model decides to invoke a tool, the runtime resolves it by name, passes the arguments, and returns the result to the model for the next turn.
+
+```rust
+pub trait Tool: Send + Sync {
+    fn name(&self) -> &str;
+    fn spec(&self) -> Result<ToolSpec>;
+    fn execute(&self, args: serde_json::Value) -> Result<serde_json::Value>;
+}
+```
+
+Every tool must be `Send + Sync` for use in async contexts.
+
+### ToolSpec
+
+The `ToolSpec` struct describes a tool to the LLM via a JSON Schema:
+
+```rust
+pub struct ToolSpec {
+    pub type_field: String,       // Always "function"
+    pub name: String,             // Tool name (must match Tool::name())
+    pub description: String,      // Human-readable description for the LLM
+    pub parameters: Value,        // JSON Schema for the input
+    pub strict: Option<bool>,     // Enable strict mode (OpenAI)
+}
+```
+
+## Defining Tools
+
+Appam provides three ways to define tools, each with different tradeoffs.
+
+### 1. `#[tool]` Macro
+
+The recommended approach for Rust tools. Annotate a function and the macro generates a struct implementing `Tool` with full JSON Schema generation and argument parsing.
+
+```rust
+use appam::prelude::*;
+
+#[tool(description = "Echoes back the input message")]
+fn echo(
+    #[arg(description = "Message to echo")]
+    message: String,
+) -> anyhow::Result<String> {
+    Ok(format!("Echo: {}", message))
+}
+```
+
+This generates a struct named `Echo` (function name in PascalCase) that implements `Tool`. Use it like:
+
+```rust
+let tool = echo();          // Create an instance
+let tool_arc = Arc::new(echo());  // Wrap for agent registration
+```
+
+#### Multiple Parameters and Defaults
+
+```rust
+#[tool(name = "search", description = "Search with pagination")]
+fn search_tool(
+    #[arg(description = "Search query")]
+    query: String,
+
+    #[arg(description = "Maximum results to return", default = 10)]
+    max_results: u32,
+
+    #[arg(description = "Include archived items", default = false)]
+    include_archived: bool,
+) -> anyhow::Result<String> {
+    Ok(format!("Searching '{}' (max: {}, archived: {})", query, max_results, include_archived))
+}
+```
+
+Parameters with `default` values become optional in the JSON Schema.
+
+#### Type Mapping
+
+The macro maps Rust types to JSON Schema types:
+
+| Rust Type | JSON Schema Type |
+|-----------|-----------------|
+| `String` | `"string"` |
+| `i32`, `i64`, `u32`, `u64`, `f32`, `f64` | `"number"` |
+| `bool` | `"boolean"` |
+| `Vec<T>` | `"array"` |
+| `serde_json::Value` | Direct pass-through |
+
+### Typed Struct Inputs with `Schema` Derive
+
+For tools with complex inputs, define a struct and derive `Schema` (which generates a `JsonSchema` implementation). The `#[tool]` macro detects typed struct parameters and deserializes the entire JSON object into your struct.
+
+```rust
+use appam::prelude::*;
+
+#[derive(Deserialize, Schema)]
+struct ReadFileInput {
+    #[description = "Absolute path to the file"]
+    file_path: String,
+
+    #[description = "Maximum number of lines to read"]
+    max_lines: Option<u32>,
+}
+
+#[tool(description = "Read the contents of a file")]
+fn read_file(input: ReadFileInput) -> Result<String> {
+    let contents = std::fs::read_to_string(&input.file_path)?;
+    match input.max_lines {
+        Some(n) => Ok(contents.lines().take(n as usize).collect::<Vec<_>>().join("\n")),
+        None => Ok(contents),
+    }
+}
+```
+
+The `#[description = "..."]` attribute on struct fields adds descriptions to the generated JSON Schema, helping the LLM understand each parameter.
+
+### 2. `ClosureTool`
+
+For quick, inline tool definitions without a dedicated struct. Useful for prototyping or simple tools.
+
+```rust
+use appam::prelude::*;
+use appam::tools::register::ClosureTool;
+use serde_json::{json, Value};
+
+let tool = ClosureTool::new(
+    "timestamp",
+    serde_json::from_value(json!({
+        "type": "function",
+        "name": "timestamp",
+        "description": "Get the current UTC timestamp",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    }))?,
+    |_args: Value| {
+        Ok(json!({ "timestamp": chrono::Utc::now().to_rfc3339() }))
+    },
+);
+```
+
+You can also register closure tools directly on a `ToolRegistry` using the `ToolRegistryExt` trait:
+
+```rust
+use appam::tools::{ToolRegistry, register::ToolRegistryExt};
+use serde_json::{json, Value};
+
+let registry = ToolRegistry::new();
+registry.register_fn(
+    "echo",
+    serde_json::from_value(json!({
+        "type": "function",
+        "name": "echo",
+        "description": "Echo the input",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "message": { "type": "string", "description": "Message to echo" }
+            },
+            "required": ["message"]
+        }
+    }))?,
+    |args: Value| {
+        let msg = args["message"].as_str().unwrap_or("");
+        Ok(json!({ "output": msg }))
+    },
+);
+```
+
+### 3. TOML Tools
+
+Tools can also be declared in agent TOML files. The loader supports Python script
+implementations and a Rust-module form for built-in tools:
+
+```toml
+[[tools]]
+name = "echo"
+schema = "tools/echo.json"
+implementation = { type = "python", script = "tools/echo.py" }
+
+[[tools]]
+name = "bash"
+schema = "tools/bash.json"
+implementation = { type = "rust", module = "appam::tools::builtin::bash" }
+```
+
+In the current crate, Python tools are the practical dynamic path. Rust-module
+loading is limited to built-in tools wired into the loader.
+
+## Tool Registry
+
+The `ToolRegistry` is a thread-safe container for tool implementations. It maps tool names to `Arc<dyn Tool>` and provides lookup, execution, and management operations.
+
+```rust
+use appam::prelude::*;
+use std::sync::Arc;
+
+let registry = ToolRegistry::new();
+
+// Register tools
+registry.register(Arc::new(echo()));
+registry.register(Arc::new(read_file()));
+
+// Register multiple at once
+registry.register_many(vec![
+    Arc::new(write_file()),
+    Arc::new(list_dir()),
+]);
+
+// Resolve by name
+if let Some(tool) = registry.resolve("echo") {
+    let result = tool.execute(json!({"message": "hello"}))?;
+}
+
+// Execute by name (resolve + execute in one call)
+let result = registry.execute("echo", json!({"message": "hello"}))?;
+
+// List registered tools
+let names = registry.list(); // Sorted Vec<String>
+
+// Management
+registry.unregister("echo");
+registry.clear();
+```
+
+The registry uses an `RwLock` internally, allowing concurrent reads (tool lookups during agent execution) while serializing writes (tool registration).
+
+## Registering Tools with Agents
+
+Tools are registered via the `AgentBuilder`:
+
+```rust
+use appam::prelude::*;
+
+let agent = AgentBuilder::new("my-agent")
+    .system_prompt("You are helpful.")
+    .with_tool(Arc::new(echo()))            // Single tool
+    .with_tools(vec![                       // Multiple tools
+        Arc::new(read_file()),
+        Arc::new(write_file()),
+    ])
+    .build()?;
+```
+
+The `AgentBuilderToolExt` trait provides an `Arc`-free alternative:
+
+```rust
+use appam::agent::quick::AgentBuilderToolExt;
+
+let agent = AgentBuilder::new("my-agent")
+    .system_prompt("You are helpful.")
+    .tool(echo())         // No Arc wrapping needed
+    .build()?;
+```
+
+For `Agent::quick()`, pass tools as `Vec<Arc<dyn Tool>>`:
+
+```rust
+let agent = Agent::quick(
+    "anthropic/claude-sonnet-4-5",
+    "You are helpful.",
+    vec![Arc::new(echo()), Arc::new(read_file())],
+)?;
+```

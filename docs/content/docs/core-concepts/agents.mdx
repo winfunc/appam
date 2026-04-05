@@ -1,0 +1,227 @@
+---
+title: Agents
+description: Understand the agent abstractions Appam uses to run high-throughput, long-horizon, traceable Rust agents.
+---
+
+Appam’s agent model is built around durable, inspectable execution. The same abstractions support small one-off runs and large concurrent jobs with retries, continuation loops, persisted sessions, and trace consumers.
+
+## The Agent Trait
+
+The `Agent` trait is the core abstraction in Appam. Every agent -- whether created from a one-liner, a builder, or a TOML file -- implements this trait. It defines the contract between your agent logic and the runtime that orchestrates LLM conversations.
+
+### Required Methods
+
+These methods must be provided by every agent implementation:
+
+| Method | Signature | Purpose |
+|--------|-----------|---------|
+| `name()` | `fn name(&self) -> &str` | Unique agent identifier |
+| `system_prompt()` | `fn system_prompt(&self) -> Result<String>` | Full system prompt for the LLM |
+| `available_tools()` | `fn available_tools(&self) -> Result<Vec<ToolSpec>>` | Tool specifications exposed to the LLM |
+
+### Methods with Default Implementations
+
+The trait provides defaults for the full runtime lifecycle. Override only what you need:
+
+| Method | Default Behavior |
+|--------|-----------------|
+| `provider()` | Returns `None` (use global config) |
+| `apply_config_overrides()` | No-op |
+| `execute_tool(name, args)` | Returns "Tool not found" error |
+| `run(user_prompt)` | Runs the default agent loop with console output |
+| `run_streaming(user_prompt, consumer)` | Runs with a custom `StreamConsumer` |
+| `run_with_consumers(user_prompt, consumers)` | Broadcasts events to multiple consumers |
+| `initial_messages(user_prompt)` | Creates system + user messages |
+| `continue_session(session_id, prompt)` | Continues a persisted session |
+| `continue_session_streaming(session_id, prompt, consumer)` | Continues with custom streaming |
+| `required_completion_tools()` | Returns `None` (no forced tool use) |
+| `max_continuations()` | Returns `2` |
+| `continuation_message()` | Returns `None` (uses default message) |
+
+## Creating Agents
+
+Appam provides three ways to create agents, each suited to different use cases.
+
+### 1. `Agent::quick()` -- One-Liner
+
+The fastest way to get an agent running. Provide a model string, system prompt, and tools. The provider is auto-detected from the model string prefix.
+
+```rust
+use appam::prelude::*;
+
+let agent = Agent::quick(
+    "anthropic/claude-sonnet-4-5",
+    "You are a helpful assistant.",
+    vec![],
+)?;
+
+agent.run("Hello!").await?;
+```
+
+`Agent::quick()` applies sensible defaults: temperature 0.7, max tokens 4096, top-p 0.9, and 3 retry attempts with exponential backoff.
+
+Provider detection rules:
+
+| Prefix | Provider |
+|--------|----------|
+| `anthropic/` or `claude-` | Anthropic |
+| `openai/`, `gpt-`, `o1-`, or `o3-` | OpenAI |
+| `vertex/`, `gemini-`, or `google/gemini` | Vertex |
+| `openrouter/` | OpenRouter |
+| Anything else | OpenRouter (default) |
+
+### 2. `AgentBuilder` -- Full Configuration
+
+The builder pattern gives you control over every aspect of agent configuration. Use this when you need thinking, caching, tool choice policies, rate limiting, or provider-specific settings.
+
+```rust
+use appam::prelude::*;
+use appam::llm::anthropic::{
+    CachingConfig, CacheTTL, RetryConfig, ThinkingConfig, ToolChoiceConfig,
+};
+use std::sync::Arc;
+
+let agent = AgentBuilder::new("research-agent")
+    .provider(LlmProvider::Anthropic)
+    .model("claude-sonnet-4-5")
+    .system_prompt("You are a research assistant with access to tools.")
+    .with_tools(vec![
+        Arc::new(read_file()),
+        Arc::new(write_file()),
+    ])
+    .thinking(ThinkingConfig::enabled(10_000))
+    .caching(CachingConfig {
+        enabled: true,
+        ttl: CacheTTL::OneHour,
+    })
+    .tool_choice(ToolChoiceConfig::Auto {
+        disable_parallel_tool_use: false,
+    })
+    .max_tokens(8192)
+    .temperature(0.5)
+    .retry(RetryConfig {
+        max_retries: 5,
+        initial_backoff_ms: 1000,
+        max_backoff_ms: 30000,
+        backoff_multiplier: 2.0,
+        jitter: true,
+    })
+    .build()?;
+```
+
+Key builder methods:
+
+| Method | Description |
+|--------|-------------|
+| `provider(LlmProvider)` | Set the LLM provider |
+| `model(str)` | Set the model identifier |
+| `system_prompt(str)` | Set the system prompt inline |
+| `system_prompt_file(path)` | Load system prompt from a file |
+| `with_tool(Arc<dyn Tool>)` | Register a single tool |
+| `with_tools(Vec<Arc<dyn Tool>>)` | Register multiple tools |
+| `thinking(ThinkingConfig)` | Configure Anthropic extended thinking |
+| `caching(CachingConfig)` | Configure Anthropic prompt caching |
+| `tool_choice(ToolChoiceConfig)` | Configure Anthropic tool choice |
+| `effort(EffortLevel)` | Set Anthropic output effort level |
+| `reasoning(ReasoningProvider)` | Provider-specific reasoning config |
+| `rate_limiter(RateLimiterConfig)` | Configure rate limiting |
+| `retry(RetryConfig)` | Configure retry behavior |
+| `max_tokens(u32)` | Set maximum output tokens |
+| `temperature(f32)` | Set sampling temperature |
+| `top_p(f32)` | Set nucleus sampling threshold |
+
+`Agent::new(name, model)` is a convenience entry point that returns an `AgentBuilder`
+with the provider inferred from the model string. It also exposes ergonomic
+helpers such as `.prompt(...)`, `.tools(...)`, and the `AgentBuilderToolExt::tool(...)`
+extension method.
+
+You can also use the `AgentBuilderToolExt` trait to register tools without wrapping in `Arc`:
+
+```rust
+use appam::prelude::*;
+use appam::agent::quick::AgentBuilderToolExt;
+
+let agent = AgentBuilder::new("agent")
+    .system_prompt("You are helpful.")
+    .tool(echo_tool())   // No Arc::new() needed
+    .build()?;
+```
+
+### 3. `TomlAgent` -- TOML Configuration
+
+Load agent configuration from a TOML file. This is ideal for separating configuration from code, or when non-developers need to modify agent behavior.
+
+```rust
+use appam::prelude::*;
+
+let agent = TomlAgent::from_file("agents/assistant.toml")?;
+agent.run("What can you do?").await?;
+```
+
+You can extend TOML agents with additional Rust tools:
+
+```rust
+let agent = TomlAgent::from_file("agents/assistant.toml")?
+    .with_additional_tool(Arc::new(my_custom_tool()));
+
+agent.run("Use the custom tool").await?;
+```
+
+## RuntimeAgent
+
+`RuntimeAgent` is the concrete agent type returned by `AgentBuilder`, `Agent::quick()`, and `Agent::new()`. It holds the fully resolved configuration, tool registry, and provider settings. All three construction paths produce a `RuntimeAgent` that implements the `Agent` trait.
+
+## The Session Struct
+
+Every call to `run()`, `run_streaming()`, or `continue_session()` returns a `Session`:
+
+```rust
+pub struct Session {
+    pub session_id: String,
+    pub agent_name: String,
+    pub model: String,
+    pub messages: Vec<ChatMessage>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub ended_at: Option<DateTime<Utc>>,
+    pub usage: Option<AggregatedUsage>,
+}
+```
+
+The `messages` field contains the full conversation history including system prompts, user messages, assistant responses, and tool call/result pairs. The `usage` field tracks token counts and estimated cost.
+
+## Session Continuation
+
+Continue a conversation by passing the session ID back to the agent:
+
+```rust
+use appam::prelude::*;
+
+let agent = Agent::quick(
+    "anthropic/claude-sonnet-4-5",
+    "You are a helpful assistant.",
+    vec![],
+)?;
+
+// First conversation
+let session = agent.run("Hello!").await?;
+
+// Continue with the session ID
+let continued = agent
+    .continue_session(&session.session_id, "What did I just say?")
+    .await?;
+```
+
+Session continuation requires [session history](/docs/core-concepts/sessions) to be enabled so the previous messages can be loaded from the database.
+
+For custom streaming during continuation:
+
+```rust
+let consumer = ChannelConsumer::new(tx);
+agent
+    .continue_session_streaming(
+        &session.session_id,
+        "Follow up question",
+        Box::new(consumer),
+    )
+    .await?;
+```

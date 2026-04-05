@@ -1,0 +1,98 @@
+---
+title: CachingConfig
+description: Configuration for prompt caching to reduce costs and latency.
+---
+
+`CachingConfig` controls Anthropic prompt caching across direct Anthropic, Azure Anthropic, and compatible Claude models on AWS Bedrock. Appam maps the same high-level setting onto the provider-specific caching mechanism underneath.
+
+## Struct Definition
+
+```rust
+pub struct CachingConfig {
+    pub enabled: bool,
+    pub ttl: CacheTTL,
+}
+
+pub enum CacheTTL {
+    FiveMinutes,  // "5m" - default, refreshed on use
+    OneHour,      // "1h" - 2x write cost
+}
+```
+
+## Fields
+
+### `enabled`
+
+Whether prompt caching is active.
+
+### `ttl`
+
+Cache time-to-live duration:
+
+- `CacheTTL::FiveMinutes` -- 5-minute cache (default). Refreshed on each use, so active conversations maintain the cache automatically.
+- `CacheTTL::OneHour` -- 1-hour cache. Higher write cost (2x base input token price) but longer retention.
+
+## Default
+
+```rust
+impl Default for CachingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            ttl: CacheTTL::FiveMinutes,
+        }
+    }
+}
+```
+
+## Provider Support
+
+- **Anthropic** -- Supported. Appam maps `CachingConfig` to Anthropic's top-level `cache_control` field.
+- **Azure Anthropic** -- Supported with the same request semantics as direct Anthropic.
+- **Bedrock** -- Supported for compatible Claude models. Appam injects block-level `cache_control` checkpoints into supported Anthropic fields because Bedrock uses explicit cache checkpoints rather than Anthropic's top-level helper.
+
+## Cache Behavior
+
+- **Prefix Matching**: Automatic prefix lookup (up to ~20 blocks)
+- **Direct Anthropic / Azure Anthropic**: Anthropic applies the top-level marker to the last cacheable block in the request
+- **Bedrock**: Appam injects block-level checkpoints into the end of the supported `system`, `messages`, and `tools` sections present in the request
+- **Refresh**: 5-minute caches refresh on each hit, effectively staying alive for the duration of an active conversation
+
+## Pricing
+
+| Operation | Cost |
+|-----------|------|
+| Cache writes (5m) | 1.25x base input token price |
+| Cache writes (1h) | 2x base input token price |
+| Cache reads | 0.1x base input token price |
+| Cache misses | Regular input token price |
+
+Cache usage is tracked in `AggregatedUsage`:
+
+- `cache_creation_input_tokens` -- Tokens used to create cache entries
+- `cache_read_input_tokens` -- Tokens read from cache (where cost savings come from)
+
+## Builder Usage
+
+```rust
+use appam::prelude::*;
+use appam::llm::anthropic::CachingConfig;
+
+let agent = AgentBuilder::new("my-agent")
+    .model("claude-sonnet-4-5")
+    .caching(CachingConfig::default())
+    .system_prompt("You are a helpful assistant with cached context.")
+    .build()?;
+```
+
+## TOML Configuration
+
+```toml
+[anthropic.caching]
+enabled = true
+ttl = "5m"
+```
+
+## Source
+
+Defined in [`src/llm/anthropic/config.rs`](https://github.com/winfunc/appam/blob/main/src/llm/anthropic/config.rs).

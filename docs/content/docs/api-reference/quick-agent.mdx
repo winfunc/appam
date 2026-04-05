@@ -1,0 +1,82 @@
+---
+title: Agent::quick
+description: Fast constructors for RuntimeAgent plus provider auto-detection helpers.
+---
+
+The `appam::agent::quick::Agent` namespace exposes the shortest path to a working [`RuntimeAgent`](/docs/api-reference/runtime-agent).
+
+## `Agent::quick`
+
+```rust
+pub fn quick(
+    model: impl Into<String>,
+    prompt: impl Into<String>,
+    tools: Vec<Arc<dyn Tool>>,
+) -> Result<RuntimeAgent>
+```
+
+Current defaults applied by `RuntimeAgent::quick(...)`:
+
+- `temperature(0.7)`
+- `max_tokens(4096)`
+- `top_p(0.9)`
+- `retry(anthropic::RetryConfig { max_retries: 3, initial_backoff_ms: 1000, max_backoff_ms: 30000, backoff_multiplier: 2.0, jitter: true })`
+
+## `Agent::quick_with`
+
+```rust
+pub fn quick_with<T: Tool + 'static>(
+    model: impl Into<String>,
+    prompt: impl Into<String>,
+    tools: Vec<T>,
+) -> Result<RuntimeAgent>
+```
+
+This is the same constructor, but it wraps concrete tools into `Arc<dyn Tool>` for you.
+
+## `Agent::new`
+
+```rust
+pub fn new(name: impl Into<String>, model: impl Into<String>) -> AgentBuilder
+```
+
+This returns an [`AgentBuilder`](/docs/api-reference/agent-builder) that is already seeded with the detected provider and model. The convenience methods documented on `AgentBuilder` such as `.prompt(...)`, `.tools(...)`, and `.tool(...)` can be used from there.
+
+## Provider detection
+
+`detect_provider(model)` currently behaves like this:
+
+| Model prefix | Provider |
+| --- | --- |
+| `openrouter/` | `LlmProvider::OpenRouterResponses` |
+| `anthropic/` or `claude-` | `LlmProvider::Anthropic` |
+| `openai-codex/` | `LlmProvider::OpenAICodex` |
+| `openai/`, `gpt-`, `o1-`, or `o3-` | `LlmProvider::OpenAI` |
+| `vertex/`, `gemini-`, or `google/gemini` | `LlmProvider::Vertex` |
+| anything else | `LlmProvider::OpenRouterResponses` |
+
+## `extract_model_name`
+
+```rust
+pub fn extract_model_name(model: &str) -> String
+```
+
+This removes only the first provider prefix. For example, `"openrouter/anthropic/claude"` becomes `"anthropic/claude"`, which is why quick-created agent names can still include a slash for OpenRouter models.
+
+## Example
+
+```rust
+use appam::prelude::*;
+
+let agent = Agent::quick(
+    "anthropic/claude-sonnet-4-5",
+    "You are a helpful assistant.",
+    vec![],
+)?;
+
+agent
+    .stream("Hello")
+    .on_content(|text| print!("{}", text))
+    .run()
+    .await?;
+```

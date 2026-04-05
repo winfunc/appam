@@ -1,0 +1,75 @@
+---
+title: LlmProvider
+description: Provider enum used by AppConfig, AgentBuilder, and DynamicLlmClient.
+---
+
+`LlmProvider` selects the backend client Appam will instantiate at runtime.
+
+## Definition
+
+```rust
+pub enum LlmProvider {
+    OpenRouterCompletions,
+    OpenRouterResponses,
+    Anthropic,
+    OpenAI,
+    OpenAICodex,
+    Vertex,
+    AzureOpenAI { resource_name: String, api_version: String },
+    AzureAnthropic { base_url: String, auth_method: AzureAnthropicAuthMethod },
+    Bedrock { region: String, model_id: String, auth_method: BedrockAuthMethod },
+}
+```
+
+`Default` is `OpenRouterCompletions`.
+
+## Parsing and display
+
+`FromStr` accepts:
+
+- `openrouter`, `openrouter-completions`, `openroutercompletions`
+- `openrouter-responses`, `openrouterresponses`
+- `anthropic`
+- `openai`
+- `openai-codex`, `openai_codex`, `codex`
+- `vertex`, `google-vertex`, `google_vertex`
+- `azure-openai`, `azure_openai`, `azure`
+- `azure-anthropic`, `azure_anthropic`
+- `bedrock`, `aws-bedrock`, `aws_bedrock`
+
+When parsing `azure*` or `bedrock`, extra fields are filled from environment variables inside `from_str(...)`.
+
+`Display` returns:
+
+- `openrouter-completions`
+- `openrouter-responses`
+- `anthropic`
+- `openai`
+- `openai-codex`
+- `vertex`
+- `azure-openai[resource@api-version]`
+- `azure-anthropic[base-url:auth]`
+- `bedrock[model_id@region:auth]`
+
+## Pricing normalization
+
+`pricing_key()` intentionally collapses variants:
+
+| Variant | `pricing_key()` |
+| --- | --- |
+| `Anthropic`, `AzureAnthropic`, `Bedrock` | `anthropic` |
+| `OpenAI`, `OpenAICodex`, `AzureOpenAI` | `openai` |
+| `OpenRouterCompletions`, `OpenRouterResponses` | `openrouter` |
+| `Vertex` | `vertex` |
+
+## Example
+
+```rust
+use appam::prelude::*;
+
+let agent = AgentBuilder::new("assistant")
+    .provider(LlmProvider::OpenAI)
+    .model("gpt-5.4")
+    .system_prompt("You are helpful.")
+    .build()?;
+```

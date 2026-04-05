@@ -1,0 +1,163 @@
+---
+title: ClosureTool
+description: Create tools from closures without implementing the Tool trait.
+---
+
+`ClosureTool` allows creating tools from closures or functions without implementing the full [`Tool`](/docs/api-reference/tool-trait) trait. This is ideal for quick prototyping, simple tools, and inline tool definitions.
+
+## Construction
+
+### `ClosureTool::new()`
+
+```rust
+pub fn new<F>(
+    name: impl Into<String>,
+    spec: ToolSpec,
+    execute_fn: F,
+) -> Self
+where
+    F: Fn(Value) -> Result<Value> + Send + Sync + 'static,
+```
+
+Creates a new closure-based tool.
+
+### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | `impl Into<String>` | Tool name (must match the name in `spec`) |
+| `spec` | `ToolSpec` | Tool specification with JSON Schema |
+| `execute_fn` | `Fn(Value) -> Result<Value>` | Closure that executes the tool |
+
+The closure must be `Send + Sync + 'static` for thread safety.
+
+### Example
+
+```rust
+use appam::prelude::*;
+
+let tool = ClosureTool::new(
+    "greet",
+    serde_json::from_value(json!({
+        "type": "function",
+        "name": "greet",
+        "description": "Greet someone by name",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Name of the person to greet"
+                }
+            },
+            "required": ["name"]
+        }
+    }))?,
+    |args: Value| {
+        let name = args["name"].as_str().unwrap_or("World");
+        Ok(json!({ "greeting": format!("Hello, {}!", name) }))
+    },
+);
+
+// Use with AgentBuilder
+let agent = AgentBuilder::new("agent")
+    .system_prompt("You are a friendly assistant.")
+    .with_tool(Arc::new(tool))
+    .build()?;
+```
+
+## Tool Trait Implementation
+
+`ClosureTool` implements `Tool`:
+
+- **`name()`** returns the stored name.
+- **`spec()`** returns a clone of the stored `ToolSpec`.
+- **`execute(args)`** invokes the closure with the provided arguments.
+
+## ToolRegistryExt Trait
+
+The `ToolRegistryExt` trait adds a convenience method to `ToolRegistry` for registering closure-based tools in a single call:
+
+```rust
+pub trait ToolRegistryExt {
+    fn register_fn<F>(
+        &self,
+        name: impl Into<String>,
+        spec: ToolSpec,
+        execute_fn: F,
+    )
+    where
+        F: Fn(Value) -> Result<Value> + Send + Sync + 'static;
+}
+```
+
+This creates a `ClosureTool`, wraps it in `Arc`, and registers it in one step.
+
+### Example
+
+```rust
+use appam::tools::{ToolRegistry, register::ToolRegistryExt};
+use serde_json::{json, Value};
+
+let registry = ToolRegistry::new();
+
+registry.register_fn(
+    "echo",
+    serde_json::from_value(json!({
+        "type": "function",
+        "name": "echo",
+        "description": "Echo back the input message",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "description": "Message to echo"
+                }
+            },
+            "required": ["message"]
+        }
+    }))?,
+    |args: Value| {
+        let message = args["message"].as_str().unwrap_or("");
+        Ok(json!({ "output": message }))
+    },
+);
+
+// Execute directly
+let result = registry.execute("echo", json!({ "message": "hello" }))?;
+assert_eq!(result["output"], "hello");
+```
+
+## When to Use ClosureTool
+
+**Use `ClosureTool` when:**
+- The tool logic is a few lines and does not warrant a dedicated struct
+- Prototyping or testing tool behavior
+- Wrapping external functions as tools
+
+**Use a struct implementing `Tool` when:**
+- The tool has complex state or configuration
+- Multiple tools share common infrastructure
+- You want compile-time type checking on parameters via `#[derive(Schema)]`
+
+**Use the `#[tool]` macro when:**
+- You want zero-boilerplate tool creation from a function signature
+- The tool's parameters map cleanly to Rust types
+
+## Imports
+
+```rust
+// ClosureTool
+use appam::tools::register::ClosureTool;
+
+// ToolRegistryExt
+use appam::tools::register::ToolRegistryExt;
+
+// Or via prelude
+use appam::prelude::*; // includes both
+```
+
+## Source
+
+Defined in [`src/tools/register.rs`](https://github.com/winfunc/appam/blob/main/src/tools/register.rs).

@@ -1,0 +1,72 @@
+---
+title: AWS Bedrock Provider
+description: Run Claude models through AWS Bedrock with Appam's Anthropic-backed client.
+---
+
+## Setup
+
+The current Bedrock integration is routed through the Anthropic client and is configured explicitly through `LlmProvider::Bedrock`.
+
+For the standard SigV4 path, set:
+
+```bash
+export AWS_ACCESS_KEY_ID="AKIA..."
+export AWS_SECRET_ACCESS_KEY="..."
+export AWS_REGION="us-east-1"
+export AWS_SESSION_TOKEN="..."  # optional
+export AWS_BEDROCK_MODEL_ID="us.anthropic.claude-sonnet-4-5-20250514-v1:0"  # optional
+```
+
+`Agent::quick()` does not auto-detect Bedrock model strings. Use `AgentBuilder`.
+
+## SigV4 Example
+
+```rust
+use appam::prelude::*;
+
+let agent = AgentBuilder::new("bedrock-agent")
+    .provider(LlmProvider::Bedrock {
+        region: "us-east-1".to_string(),
+        model_id: "us.anthropic.claude-sonnet-4-5-20250514-v1:0".to_string(),
+        auth_method: BedrockAuthMethod::SigV4,
+    })
+    .model("us.anthropic.claude-sonnet-4-5-20250514-v1:0")
+    .system_prompt("You are a helpful assistant.")
+    .build()?;
+```
+
+## Bedrock-Specific Notes
+
+- Bedrock model IDs use AWS-specific names such as `us.anthropic.claude-sonnet-4-5-20250514-v1:0`.
+- The provider enum carries `region`, `model_id`, and `auth_method`.
+- Thinking reuses the same builder methods as direct Anthropic.
+- Prompt caching is available for supported Claude models on Bedrock, but it uses Bedrock-style block checkpoints instead of Anthropic's top-level request helper.
+- AWS support is model-specific. Check the current Bedrock prompt caching support table before assuming a given Bedrock Claude model supports 5-minute or 1-hour TTLs.
+
+```rust
+use appam::prelude::*;
+
+let agent = AgentBuilder::new("bedrock-thinking")
+    .provider(LlmProvider::Bedrock {
+        region: "us-east-1".to_string(),
+        model_id: "us.anthropic.claude-sonnet-4-5-20250514-v1:0".to_string(),
+        auth_method: BedrockAuthMethod::SigV4,
+    })
+    .model("us.anthropic.claude-sonnet-4-5-20250514-v1:0")
+    .system_prompt("You are a helpful assistant.")
+    .thinking(ThinkingConfig::enabled(16_000))
+    .caching(CachingConfig::default())
+    .build()?;
+```
+
+## Authentication Modes
+
+The enum also exposes `BedrockAuthMethod::BearerToken` for the Bedrock API-key flow. The high-level agent examples in this crate use the SigV4 path because it is the streaming-friendly default.
+
+## Example Binary
+
+The crate includes a Bedrock example that reads region/model/auth settings from the environment:
+
+```bash
+cargo run --example coding-agent-bedrock
+```

@@ -1,0 +1,56 @@
+---
+title: DynamicLlmClient
+description: Runtime wrapper that dispatches LlmClient calls to the selected provider implementation.
+---
+
+`DynamicLlmClient` is the enum Appam constructs from [`AppConfig`](/docs/api-reference/app-config) before each run. It implements [`LlmClient`](/docs/api-reference/llm-client) by delegating to the inner provider client.
+
+## Variants
+
+```rust
+pub enum DynamicLlmClient {
+    OpenRouterCompletions(OpenRouterCompletionsClient),
+    OpenRouterResponses(OpenRouterClient),
+    Anthropic(AnthropicClient),
+    OpenAI(OpenAIClient),
+    OpenAICodex(OpenAICodexClient),
+    Vertex(VertexClient),
+    AzureOpenAI { client: OpenAIClient, resource_name: String, api_version: String },
+    AzureAnthropic { client: AnthropicClient, base_url: String, auth_method: AzureAnthropicAuthMethod },
+    Bedrock { client: AnthropicClient, region: String, model_id: String, auth_method: BedrockAuthMethod },
+}
+```
+
+## Construction
+
+```rust
+pub fn from_config(config: &AppConfig) -> Result<Self>
+```
+
+Current `from_config(...)` behavior:
+
+- `OpenRouterCompletions` uses `OpenRouterCompletionsClient::new(config.openrouter.clone(), config.openrouter.reasoning.clone(), config.openrouter.provider_preferences.clone())`
+- `OpenRouterResponses` uses `OpenRouterClient::new(config.openrouter.clone())`
+- `Anthropic` uses `AnthropicClient::new(config.anthropic.clone())`
+- `OpenAI` uses `OpenAIClient::new(config.openai.clone())`
+- `OpenAICodex` uses `OpenAICodexClient::new(config.openai_codex.clone())`
+- `Vertex` uses `VertexClient::new(config.vertex.clone())`
+- `AzureOpenAI` clones `config.openai`, injects `azure`, then builds an `OpenAIClient`
+- `AzureAnthropic` clones `config.anthropic`, injects `azure`, then builds an `AnthropicClient`
+- `Bedrock` clones `config.anthropic`, injects `bedrock`, and forces `stream = false` for bearer-token auth
+
+## Utility methods
+
+```rust
+pub fn provider(&self) -> LlmProvider
+pub fn provider_name(&self) -> &str
+pub fn latest_response_id(&self) -> Option<String>
+pub fn set_previous_response_id(&self, response_id: Option<String>)
+pub fn take_last_failed_exchange(&self) -> Option<ProviderFailureCapture>
+```
+
+Notes:
+
+- `latest_response_id()` currently returns values for `OpenAI`, `OpenAICodex`, and `AzureOpenAI`.
+- `set_previous_response_id(...)` currently does anything only for `OpenAI` and `AzureOpenAI`.
+- `take_last_failed_exchange()` currently returns provider-native diagnostics for `OpenAI`, `OpenAICodex`, `AzureOpenAI`, `Anthropic`, `AzureAnthropic`, and `Bedrock`.

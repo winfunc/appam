@@ -1,0 +1,205 @@
+---
+title: ToolSpec
+description: Tool specification containing name, description, and JSON Schema.
+---
+
+`ToolSpec` defines the schema for a tool that can be invoked by the LLM. It includes the tool's name, a human-readable description, and a JSON Schema for the parameters. This specification is sent to the LLM provider so the model understands what tools are available and how to call them.
+
+## Struct Definition
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolSpec {
+    #[serde(rename = "type")]
+    pub type_field: String,
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub strict: Option<bool>,
+}
+```
+
+## Fields
+
+### `type_field`
+
+```rust
+pub type_field: String
+```
+
+Type discriminator for the tool specification. Always set to `"function"`. Serialized as `"type"` in JSON.
+
+### `name`
+
+```rust
+pub name: String
+```
+
+The unique function name for this tool. Must match the name returned by `Tool::name()` and the name used in LLM tool calls. Names should be lowercase with underscores (e.g., `"read_file"`, `"web_search"`).
+
+### `description`
+
+```rust
+pub description: String
+```
+
+A human-readable description of what the tool does. The LLM uses this description to decide when to invoke the tool, so it should be clear and specific. Include details about expected inputs and outputs.
+
+### `parameters`
+
+```rust
+pub parameters: serde_json::Value
+```
+
+A JSON Schema object defining the tool's input parameters. Must be a valid JSON Schema with `"type": "object"` at the top level. The schema defines parameter names, types, descriptions, constraints, and which parameters are required.
+
+### `strict`
+
+```rust
+pub strict: Option<bool>
+```
+
+When `true`, enables strict mode for providers that support it (e.g., OpenAI). In strict mode, the LLM is constrained to produce arguments that exactly match the schema. When `None` or `false`, the LLM may produce arguments that loosely match.
+
+## Creating a ToolSpec
+
+### From JSON
+
+The most common way to create a `ToolSpec` is by deserializing from JSON:
+
+```rust
+use appam::llm::ToolSpec;
+use serde_json::json;
+
+let spec: ToolSpec = serde_json::from_value(json!({
+    "type": "function",
+    "name": "calculate",
+    "description": "Perform a mathematical calculation",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "expression": {
+                "type": "string",
+                "description": "Mathematical expression to evaluate"
+            }
+        },
+        "required": ["expression"]
+    }
+}))?;
+```
+
+### From a JSON File
+
+For TOML-configured agents, tool schemas are loaded from JSON files:
+
+```json
+{
+    "type": "function",
+    "name": "read_file",
+    "description": "Read the contents of a file",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "Absolute file path"
+            },
+            "encoding": {
+                "type": "string",
+                "description": "File encoding (default: utf-8)",
+                "enum": ["utf-8", "ascii", "latin-1"]
+            }
+        },
+        "required": ["path"]
+    }
+}
+```
+
+### Via `#[tool]` Macro
+
+The `#[tool]` procedural macro auto-generates the `ToolSpec` from a function signature:
+
+```rust
+use appam::prelude::*;
+
+#[tool(description = "Greet someone by name")]
+fn greet(name: String) -> Result<Value> {
+    Ok(json!({ "greeting": format!("Hello, {}!", name) }))
+}
+```
+
+### Via `#[derive(Schema)]`
+
+The `Schema` derive macro generates JSON Schema for struct types, which can be used as `parameters`:
+
+```rust
+use appam::prelude::*;
+
+#[derive(Schema, Deserialize)]
+struct SearchParams {
+    /// Search query
+    query: String,
+    /// Maximum number of results
+    #[serde(default = "default_limit")]
+    limit: u32,
+}
+```
+
+## How ToolSpec is Sent to Providers
+
+Each LLM provider receives tool specs in a slightly different format. The runtime handles conversion automatically:
+
+- **Anthropic Messages API**: Sent as `tools` array with `name`, `description`, and `input_schema` fields.
+- **OpenAI Responses API**: Sent as `tools` array with `type: "function"` wrapper.
+- **OpenRouter**: Sent in provider-appropriate format (Completions or Responses).
+- **Vertex Gemini API**: Converted to `functionDeclarations` within `tools` array.
+
+You define the spec once; Appam handles provider-specific formatting.
+
+## JSON Schema Best Practices
+
+1. **Always include descriptions** for every property. The LLM relies on descriptions to understand parameter semantics.
+
+2. **Use `required` arrays** to indicate mandatory parameters. Optional parameters should have defaults documented in their description.
+
+3. **Use `enum` constraints** when parameters have a fixed set of valid values.
+
+4. **Keep schemas focused.** Each tool should do one thing. Prefer multiple simple tools over one complex tool.
+
+5. **Document edge cases** in descriptions: "Path must be absolute", "Returns empty string if file not found", etc.
+
+Example with rich schema:
+
+```json
+{
+    "type": "function",
+    "name": "web_search",
+    "description": "Search the web and return relevant results",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Search query. Be specific for better results."
+            },
+            "num_results": {
+                "type": "integer",
+                "description": "Number of results to return (1-10, default: 5)",
+                "minimum": 1,
+                "maximum": 10
+            },
+            "language": {
+                "type": "string",
+                "description": "Result language filter",
+                "enum": ["en", "es", "fr", "de", "ja", "zh"]
+            }
+        },
+        "required": ["query"]
+    }
+}
+```
+
+## Source
+
+Defined in [`src/llm/mod.rs`](https://github.com/winfunc/appam/blob/main/src/llm/mod.rs).

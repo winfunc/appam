@@ -1,0 +1,15 @@
+{
+  "title": "Appam",
+  "pages": [
+    "---Getting Started---",
+    "getting-started",
+    "---Core Concepts---",
+    "core-concepts",
+    "---Guides---",
+    "guides",
+    "---API Reference---",
+    "api-reference",
+    "---Examples---",
+    "examples"
+  ]
+}

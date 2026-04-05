@@ -1,0 +1,193 @@
+---
+title: ToolRegistry
+description: Registry for managing and executing tools by name.
+---
+
+`ToolRegistry` is a thread-safe, dynamic registry that maps tool names to their implementations. It is used by both `RuntimeAgent` and `TomlAgent` to resolve and execute tool calls from the LLM.
+
+## Construction
+
+### `ToolRegistry::new()`
+
+```rust
+pub fn new() -> Self
+```
+
+Creates a new empty tool registry.
+
+```rust
+use appam::tools::ToolRegistry;
+
+let registry = ToolRegistry::new();
+```
+
+`ToolRegistry` also implements `Default`:
+
+```rust
+let registry = ToolRegistry::default();
+```
+
+### `ToolRegistry::with_builtins()`
+
+```rust
+pub fn with_builtins() -> Self
+```
+
+Creates a registry pre-populated with built-in tools. Currently returns an empty registry (built-in tools are registered separately).
+
+## Registration
+
+### `.register()`
+
+```rust
+pub fn register(&self, tool: Arc<dyn Tool>)
+```
+
+Registers a tool in the registry. If a tool with the same name already exists, it is silently replaced (last write wins).
+
+```rust
+use std::sync::Arc;
+
+let registry = ToolRegistry::new();
+registry.register(Arc::new(MyTool));
+```
+
+### `.register_many()`
+
+```rust
+pub fn register_many(&self, tools: Vec<Arc<dyn Tool>>)
+```
+
+Registers multiple tools at once. Equivalent to calling `.register()` for each tool.
+
+```rust
+registry.register_many(vec![
+    Arc::new(Tool1),
+    Arc::new(Tool2),
+    Arc::new(Tool3),
+]);
+```
+
+## Resolution
+
+### `.resolve()`
+
+```rust
+pub fn resolve(&self, name: &str) -> Option<Arc<dyn Tool>>
+```
+
+Looks up a tool by name. Returns a cloned `Arc` to the tool implementation, or `None` if the tool is not registered.
+
+```rust
+if let Some(tool) = registry.resolve("bash") {
+    let result = tool.execute(json!({ "command": "ls" }))?;
+}
+```
+
+### `.execute()`
+
+```rust
+pub fn execute(&self, name: &str, args: serde_json::Value) -> Result<serde_json::Value>
+```
+
+Convenience method that combines resolution and execution. Returns an error if the tool is not found or execution fails.
+
+```rust
+let result = registry.execute("read_file", json!({ "path": "/tmp/test.txt" }))?;
+```
+
+This is equivalent to:
+
+```rust
+let tool = registry.resolve(name)
+    .ok_or_else(|| anyhow!("Tool not found: {}", name))?;
+tool.execute(args)
+```
+
+## Inspection
+
+### `.list()`
+
+```rust
+pub fn list(&self) -> Vec<String>
+```
+
+Returns a sorted vector of all registered tool names.
+
+```rust
+let names = registry.list();
+// ["bash", "read_file", "write_file"]
+```
+
+### `.len()`
+
+```rust
+pub fn len(&self) -> usize
+```
+
+Returns the number of registered tools.
+
+### `.is_empty()`
+
+```rust
+pub fn is_empty(&self) -> bool
+```
+
+Returns `true` if no tools are registered.
+
+## Removal
+
+### `.unregister()`
+
+```rust
+pub fn unregister(&self, name: &str) -> Option<Arc<dyn Tool>>
+```
+
+Removes a tool by name. Returns the removed tool if it existed, or `None` if not found.
+
+```rust
+if let Some(removed) = registry.unregister("deprecated_tool") {
+    println!("Removed: {}", removed.name());
+}
+```
+
+### `.clear()`
+
+```rust
+pub fn clear(&self)
+```
+
+Removes all tools from the registry.
+
+## Thread Safety
+
+`ToolRegistry` uses `Arc<RwLock<HashMap>>` internally:
+
+- **Reads** (`resolve`, `list`, `len`, `is_empty`) acquire a read lock and can proceed concurrently.
+- **Writes** (`register`, `unregister`, `clear`) acquire a write lock and are serialized.
+
+The registry implements `Clone` (cloning the inner `Arc`), so multiple agents can share the same registry.
+
+```rust
+let registry = Arc::new(ToolRegistry::new());
+registry.register(Arc::new(shared_tool));
+
+let agent1 = RuntimeAgent::new("agent-1", "...", Arc::clone(&registry));
+let agent2 = RuntimeAgent::new("agent-2", "...", Arc::clone(&registry));
+// Both agents share the same tools
+```
+
+## Name Collision Behavior
+
+When registering a tool with a name that already exists, the new tool silently replaces the old one. This is intentional -- it allows extending TOML-configured agents by overriding specific tools:
+
+```rust
+let agent = TomlAgent::from_file("agent.toml")?;
+
+// Override the "bash" tool with a sandboxed version
+agent.registry().register(Arc::new(SandboxedBashTool));
+```
+
+## Source
+
+Defined in [`src/tools/registry.rs`](https://github.com/winfunc/appam/blob/main/src/tools/registry.rs).
