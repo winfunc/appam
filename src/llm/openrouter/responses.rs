@@ -62,7 +62,7 @@ impl OpenRouterClient {
                 .tcp_keepalive(std::time::Duration::from_secs(60))
                 .tcp_nodelay(true)
                 .gzip(true)
-                .user_agent("appam/0.1.0");
+                .user_agent("appam/0.1.1");
 
             if let Some(addrs) = ctx.resolved_addrs() {
                 builder = builder.resolve_to_addrs(ctx.host(), addrs);
@@ -162,7 +162,7 @@ impl OpenRouterClient {
             "input": input_items,
             "stream": true,
             "tool_choice": "auto",
-            "parallel_tool_calls": false,
+            "parallel_tool_calls": self.cfg.parallel_tool_calls.unwrap_or(false),
             "usage": {"include": true},
         });
 

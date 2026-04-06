@@ -119,6 +119,14 @@ struct ParamInfo {
     description: Option<String>,
     default: Option<syn::Expr>,
     json_type: &'static str,
+    kind: ParamKind,
+}
+
+enum ParamKind {
+    User,
+    ToolContext,
+    AppState(Box<Type>),
+    SessionState(Box<Type>),
 }
 
 fn tool_impl(attr_args: Punctuated<Meta, Token![,]>, input_fn: ItemFn) -> syn::Result<TokenStream> {
@@ -188,6 +196,7 @@ fn tool_impl(attr_args: Punctuated<Meta, Token![,]>, input_fn: ItemFn) -> syn::R
 
                 // Parse #[arg(...)] attributes
                 let (arg_description, arg_default) = parse_arg_attributes(attrs)?;
+                let kind = classify_param_kind(ty)?;
 
                 params.push(ParamInfo {
                     name: param_name,
@@ -196,26 +205,45 @@ fn tool_impl(attr_args: Punctuated<Meta, Token![,]>, input_fn: ItemFn) -> syn::R
                     description: arg_description,
                     default: arg_default,
                     json_type,
+                    kind,
                 });
             }
         }
     }
 
+    let user_params: Vec<&ParamInfo> = params
+        .iter()
+        .filter(|param| matches!(param.kind, ParamKind::User))
+        .collect();
+
     // Check if function takes a single serde_json::Value parameter
-    let takes_json_value =
-        params.len() == 1 && params[0].json_type == "object" && is_json_value_type(&params[0].ty);
+    let takes_json_value = user_params.len() == 1
+        && user_params[0].json_type == "object"
+        && is_json_value_type(&user_params[0].ty);
 
     // Check if function takes a single typed struct (for hybrid approach)
     // If it's not String/bool/number/Value, assume it's a custom struct with JsonSchema
-    let takes_typed_struct = params.len() == 1
-        && params[0].json_type == "string"  // Unknown types map to "string" by default
-        && !is_primitive_type(&params[0].ty)
-        && !is_json_value_type(&params[0].ty);
+    let takes_typed_struct = user_params.len() == 1
+        && user_params[0].json_type == "string"
+        && !is_primitive_type(&user_params[0].ty)
+        && !is_json_value_type(&user_params[0].ty);
+
+    let needs_async_tool = input_fn.sig.asyncness.is_some()
+        || params
+            .iter()
+            .any(|param| !matches!(param.kind, ParamKind::User));
+
+    if takes_typed_struct && user_params.len() != 1 {
+        return Err(syn::Error::new_spanned(
+            &input_fn.sig.inputs,
+            "Typed-struct tool inputs may only be combined with injected ToolContext/State/SessionState parameters",
+        ));
+    }
 
     // Generate parameter schema
     let param_schema = if takes_typed_struct {
         // For typed structs, generate schema at runtime using schemars
-        let ty = &params[0].ty;
+        let ty = &user_params[0].ty;
         quote! {
             {
                 use ::schemars::JsonSchema;
@@ -230,31 +258,31 @@ fn tool_impl(attr_args: Punctuated<Meta, Token![,]>, input_fn: ItemFn) -> syn::R
             }
         }
     } else {
-        generate_param_schema(&params)
+        generate_param_schema(&user_params)
     };
 
     // Generate argument parsing code
     let arg_parsing = if takes_json_value {
         // Direct pass-through for serde_json::Value
-        let param_ident = &params[0].ident;
+        let param_ident = &user_params[0].ident;
         quote! {
             let #param_ident = args;
         }
     } else if takes_typed_struct {
         // Deserialize the entire args object into the typed struct
-        let param_ident = &params[0].ident;
-        let ty = &params[0].ty;
+        let param_ident = &user_params[0].ident;
+        let ty = &user_params[0].ty;
         quote! {
             let #param_ident: #ty = ::serde_json::from_value(args)
                 .map_err(|e| ::anyhow::anyhow!("Failed to deserialize arguments: {}", e))?;
         }
-    } else if params.is_empty() {
+    } else if user_params.is_empty() {
         // No parameters
         quote! {}
     } else {
         // Parse individual parameters based on their types
         let mut extractions = Vec::new();
-        for param in &params {
+        for param in &user_params {
             let name_ident = &param.ident;
             let name_str = &param.name;
             let ty = &param.ty;
@@ -339,55 +367,133 @@ fn tool_impl(attr_args: Punctuated<Meta, Token![,]>, input_fn: ItemFn) -> syn::R
         }
     };
 
-    // Collect parameter identifiers for function call (unused but may be needed for future enhancements)
-    let _param_idents: Vec<_> = params.iter().map(|p| &p.ident).collect();
+    let injected_param_setup: Vec<_> = params
+        .iter()
+        .filter_map(|param| match &param.kind {
+            ParamKind::User => None,
+            ParamKind::ToolContext => {
+                let ident = &param.ident;
+                Some(quote! {
+                    let #ident = ctx.clone();
+                })
+            }
+            ParamKind::AppState(inner_ty) => {
+                let ident = &param.ident;
+                Some(quote! {
+                    let #ident = ctx.app_state::<#inner_ty>()?;
+                })
+            }
+            ParamKind::SessionState(inner_ty) => {
+                let ident = &param.ident;
+                Some(quote! {
+                    let #ident = ctx.session_state::<#inner_ty>()?;
+                })
+            }
+        })
+        .collect();
 
-    // Generate result handling code - always wrap in Result since tools return Result
-    let result_handling = quote! {
-        let result = { #fn_block };
-        match result {
-            Ok(value) => Ok(serde_json::json!({ "output": value })),
-            Err(e) => Err(e),
+    let execute_body = if input_fn.sig.asyncness.is_some() {
+        quote! {
+            let result = (async move #fn_block).await;
+            match result {
+                Ok(value) => Ok(serde_json::json!({ "output": value })),
+                Err(e) => Err(e),
+            }
+        }
+    } else {
+        quote! {
+            let result = { #fn_block };
+            match result {
+                Ok(value) => Ok(serde_json::json!({ "output": value })),
+                Err(e) => Err(e),
+            }
         }
     };
 
     // Generate the tool struct and implementation
-    let expanded = quote! {
-        #[doc = #description_str]
-        #fn_vis struct #struct_name;
+    let expanded = if needs_async_tool {
+        quote! {
+            #[doc = #description_str]
+            #fn_vis struct #struct_name;
 
-        impl #struct_name {
-            /// Create a new instance of this tool.
-            #fn_vis fn new() -> Self {
-                Self
+            impl #struct_name {
+                /// Create a new instance of this tool.
+                #fn_vis fn new() -> Self {
+                    Self
+                }
+            }
+
+            #[::appam::async_trait]
+            impl ::appam::tools::AsyncTool for #struct_name {
+                fn name(&self) -> &str {
+                    #tool_name_str
+                }
+
+                fn spec(&self) -> ::anyhow::Result<::appam::llm::ToolSpec> {
+                    let parameters = #param_schema;
+                    Ok(::appam::llm::ToolSpec {
+                        type_field: "function".to_string(),
+                        name: #tool_name_str.to_string(),
+                        description: #description_str.to_string(),
+                        parameters,
+                        strict: None,
+                    })
+                }
+
+                async fn execute(
+                    &self,
+                    ctx: ::appam::tools::ToolContext,
+                    args: ::serde_json::Value,
+                ) -> ::anyhow::Result<::serde_json::Value> {
+                    #arg_parsing
+                    #(#injected_param_setup)*
+                    #execute_body
+                }
+            }
+
+            /// Create a new instance of the tool.
+            #fn_vis fn #fn_name() -> #struct_name {
+                #struct_name::new()
             }
         }
+    } else {
+        quote! {
+            #[doc = #description_str]
+            #fn_vis struct #struct_name;
 
-        impl ::appam::tools::Tool for #struct_name {
-            fn name(&self) -> &str {
-                #tool_name_str
+            impl #struct_name {
+                /// Create a new instance of this tool.
+                #fn_vis fn new() -> Self {
+                    Self
+                }
             }
 
-            fn spec(&self) -> ::anyhow::Result<::appam::llm::ToolSpec> {
-                let parameters = #param_schema;
-                Ok(::appam::llm::ToolSpec {
-                    type_field: "function".to_string(),
-                    name: #tool_name_str.to_string(),
-                    description: #description_str.to_string(),
-                    parameters,
-                    strict: None,
-                })
+            impl ::appam::tools::Tool for #struct_name {
+                fn name(&self) -> &str {
+                    #tool_name_str
+                }
+
+                fn spec(&self) -> ::anyhow::Result<::appam::llm::ToolSpec> {
+                    let parameters = #param_schema;
+                    Ok(::appam::llm::ToolSpec {
+                        type_field: "function".to_string(),
+                        name: #tool_name_str.to_string(),
+                        description: #description_str.to_string(),
+                        parameters,
+                        strict: None,
+                    })
+                }
+
+                fn execute(&self, args: ::serde_json::Value) -> ::anyhow::Result<::serde_json::Value> {
+                    #arg_parsing
+                    #execute_body
+                }
             }
 
-            fn execute(&self, args: ::serde_json::Value) -> ::anyhow::Result<::serde_json::Value> {
-                #arg_parsing
-                #result_handling
+            /// Create a new instance of the tool.
+            #fn_vis fn #fn_name() -> #struct_name {
+                #struct_name::new()
             }
-        }
-
-        /// Create a new instance of the tool.
-        #fn_vis fn #fn_name() -> #struct_name {
-            #struct_name::new()
         }
     };
 
@@ -431,6 +537,49 @@ fn type_to_json_type(ty: &Type) -> &'static str {
         "object"
     } else {
         "string" // Default fallback
+    }
+}
+
+fn classify_param_kind(ty: &Type) -> syn::Result<ParamKind> {
+    let Type::Path(type_path) = ty else {
+        return Ok(ParamKind::User);
+    };
+
+    let Some(segment) = type_path.path.segments.last() else {
+        return Ok(ParamKind::User);
+    };
+
+    match segment.ident.to_string().as_str() {
+        "ToolContext" => Ok(ParamKind::ToolContext),
+        "State" => Ok(ParamKind::AppState(extract_single_type_argument(segment)?)),
+        "SessionState" => Ok(ParamKind::SessionState(extract_single_type_argument(
+            segment,
+        )?)),
+        _ => Ok(ParamKind::User),
+    }
+}
+
+fn extract_single_type_argument(segment: &syn::PathSegment) -> syn::Result<Box<Type>> {
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return Err(syn::Error::new_spanned(
+            segment,
+            "State injection parameters must use generic syntax like State<MyType>",
+        ));
+    };
+
+    if args.args.len() != 1 {
+        return Err(syn::Error::new_spanned(
+            args,
+            "State injection parameters require exactly one generic type argument",
+        ));
+    }
+
+    match args.args.first().unwrap() {
+        syn::GenericArgument::Type(ty) => Ok(Box::new(ty.clone())),
+        other => Err(syn::Error::new_spanned(
+            other,
+            "State injection parameters require a concrete type argument",
+        )),
     }
 }
 
@@ -489,7 +638,7 @@ fn parse_arg_attributes(attrs: &[Attribute]) -> syn::Result<(Option<String>, Opt
 }
 
 /// Generate JSON schema for parameters.
-fn generate_param_schema(params: &[ParamInfo]) -> proc_macro2::TokenStream {
+fn generate_param_schema(params: &[&ParamInfo]) -> proc_macro2::TokenStream {
     if params.is_empty() {
         return quote! {
             ::serde_json::json!({

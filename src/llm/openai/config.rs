@@ -133,6 +133,13 @@ pub struct OpenAIConfig {
     #[serde(default)]
     pub max_output_tokens: Option<i32>,
 
+    /// Whether provider-side parallel tool batching should be enabled.
+    ///
+    /// Appam keeps this disabled by default and only turns it on when the
+    /// owning agent explicitly opts in.
+    #[serde(default)]
+    pub parallel_tool_calls: Option<bool>,
+
     /// Temperature for sampling (0.0-2.0)
     ///
     /// Lower values are more deterministic, higher values more creative.
@@ -414,6 +421,7 @@ impl Default for OpenAIConfig {
             model: Self::default_model(),
             pricing_model: None,
             max_output_tokens: Some(4096),
+            parallel_tool_calls: Some(false),
             temperature: None,
             top_p: None,
             stream: Self::default_stream(),

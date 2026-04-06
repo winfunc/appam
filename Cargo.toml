@@ -1,6 +1,6 @@
 [package]
 name = "appam"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.89"
 authors = ["Winfunc Research"]
@@ -31,7 +31,7 @@ path = "src/lib.rs"
 
 [dependencies]
 # Proc macros
-appam_macros = { path = "appam_macros", version = "0.1.0" }
+appam_macros = { path = "appam_macros", version = "0.1.1" }
 
 # Core async runtime
 tokio = { version = "1.50", features = ["full"] }

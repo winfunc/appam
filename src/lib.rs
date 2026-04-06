@@ -240,10 +240,11 @@ pub use config::{
 pub use llm::{
     DynamicLlmClient, LlmClient, LlmProvider, UnifiedMessage, UnifiedTool, UnifiedToolCall,
 };
-pub use tools::{Tool, ToolRegistry};
+pub use tools::{AsyncTool, SessionState, State, Tool, ToolConcurrency, ToolContext, ToolRegistry};
 
 // Re-export procedural macros
 pub use appam_macros::{tool, Schema};
+pub use async_trait::async_trait;
 
 /// Prelude module for convenient imports.
 ///
@@ -287,7 +288,9 @@ pub mod prelude {
     pub use crate::agent::{AgentBuilder, RuntimeAgent, Session, TomlAgent}; // The trait
 
     // Quick constructors and shortcuts (NEW!)
-    pub use crate::agent::quick::{Agent, AgentBuilderToolExt, AgentQuick};
+    pub use crate::agent::quick::{
+        Agent, AgentBuilderAsyncToolExt, AgentBuilderToolExt, AgentQuick,
+    };
 
     // Streaming types
     pub use crate::agent::streaming::{StreamConsumer, StreamEvent};
@@ -318,7 +321,9 @@ pub mod prelude {
 
     // Tool system
     pub use crate::tools::register::{ClosureTool, ToolRegistryExt};
-    pub use crate::tools::{Tool, ToolRegistry};
+    pub use crate::tools::{
+        AsyncTool, SessionState, State, Tool, ToolConcurrency, ToolContext, ToolRegistry,
+    };
 
     // Procedural macros - the star of the DX improvements! (NEW!)
     pub use appam_macros::{tool, Schema};

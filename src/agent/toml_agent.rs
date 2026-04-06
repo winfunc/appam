@@ -12,7 +12,9 @@ use tracing::info;
 
 use super::{config::AgentConfig, Agent};
 use crate::llm::ToolSpec;
-use crate::tools::{loader::load_tools, registry::ToolRegistry};
+use crate::tools::{
+    loader::load_tools, registry::ToolRegistry, AsyncTool, ToolConcurrency, ToolContext,
+};
 
 /// Agent loaded from a TOML configuration file.
 ///
@@ -184,6 +186,12 @@ impl TomlAgent {
         self
     }
 
+    /// Add an additional async/context-aware tool to the agent's registry.
+    pub fn with_additional_async_tool(self, tool: Arc<dyn AsyncTool>) -> Self {
+        self.registry.register_async(tool);
+        self
+    }
+
     /// Add multiple additional tools at once.
     ///
     /// # Examples
@@ -211,6 +219,14 @@ impl TomlAgent {
     pub fn with_additional_tools(self, tools: Vec<Arc<dyn crate::tools::Tool>>) -> Self {
         for tool in tools {
             self.registry.register(tool);
+        }
+        self
+    }
+
+    /// Add multiple additional async/context-aware tools at once.
+    pub fn with_additional_async_tools(self, tools: Vec<Arc<dyn AsyncTool>>) -> Self {
+        for tool in tools {
+            self.registry.register_async(tool);
         }
         self
     }
@@ -244,19 +260,26 @@ impl Agent for TomlAgent {
     }
 
     fn available_tools(&self) -> Result<Vec<ToolSpec>> {
-        let mut specs = Vec::new();
-
-        for tool_name in self.registry.list() {
-            if let Some(tool) = self.registry.resolve(&tool_name) {
-                specs.push(tool.spec()?);
-            }
-        }
-
-        Ok(specs)
+        self.registry.specs()
     }
 
     fn execute_tool(&self, name: &str, args: serde_json::Value) -> Result<serde_json::Value> {
         self.registry.execute(name, args)
+    }
+
+    async fn execute_tool_with_context(
+        &self,
+        name: &str,
+        ctx: ToolContext,
+        args: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.registry.execute_with_context(ctx, name, args).await
+    }
+
+    fn tool_concurrency(&self, name: &str) -> ToolConcurrency {
+        self.registry
+            .concurrency(name)
+            .unwrap_or(ToolConcurrency::SerialOnly)
     }
 
     // Uses default run implementation from runtime module

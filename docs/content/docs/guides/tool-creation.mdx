@@ -160,6 +160,49 @@ let tool = ClosureTool::new(
 );
 ```
 
+## Async Tools with Managed State
+
+For Rust tools that need runtime metadata, app-scoped state, or session-scoped state, implement the async tool path. App state is registered once with `manage(...)`; session state is registered lazily with `session_state::<T>()` or `session_state_with(...)`.
+
+```rust
+use appam::prelude::*;
+
+#[derive(Clone)]
+struct GreetingConfig {
+    prefix: String,
+}
+
+#[derive(Default)]
+struct GreetingSession {
+    count: u64,
+}
+
+#[tool(description = "Greet a user while tracking per-session state")]
+async fn greet_user(
+    config: State<GreetingConfig>,
+    session: SessionState<GreetingSession>,
+    #[arg(description = "User name")] name: String,
+) -> Result<String> {
+    let count = session.update(|state| {
+        state.count += 1;
+        state.count
+    })?;
+
+    Ok(format!("{} {}, visit {}", config.prefix, name, count))
+}
+
+let agent = AgentBuilder::new("stateful-agent")
+    .system_prompt("Use the greeting tool when helpful.")
+    .manage(GreetingConfig {
+        prefix: "Hello".to_string(),
+    })
+    .session_state::<GreetingSession>()
+    .async_tool(greet_user())
+    .build()?;
+```
+
+Injected parameters such as `ToolContext`, `State<T>`, and `SessionState<T>` are excluded from the JSON schema that the model sees. Only user-facing arguments remain in the tool definition.
+
 ## Using `ToolRegistryExt::register_fn`
 
 Register closure-based tools directly on a `ToolRegistry`:

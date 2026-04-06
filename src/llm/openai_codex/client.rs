@@ -62,7 +62,7 @@ impl OpenAICodexClient {
                 .tcp_keepalive(Duration::from_secs(60))
                 .tcp_nodelay(true)
                 .gzip(true)
-                .user_agent("appam/0.1.0");
+                .user_agent("appam/0.1.1");
 
             if let Some(addrs) = ctx.resolved_addrs() {
                 builder = builder.resolve_to_addrs(ctx.host(), addrs);
@@ -202,7 +202,7 @@ impl OpenAICodexClient {
             } else {
                 Some(ToolChoice::String("auto".to_string()))
             },
-            parallel_tool_calls: Some(true),
+            parallel_tool_calls: Some(self.config.parallel_tool_calls.unwrap_or(false)),
             max_tool_calls: None,
             temperature: sampling_supported
                 .then_some(self.config.temperature)
@@ -1187,7 +1187,7 @@ mod tests {
             serialized
                 .get("parallel_tool_calls")
                 .and_then(Value::as_bool),
-            Some(true)
+            Some(false)
         );
         assert_eq!(
             serialized.get("store").and_then(Value::as_bool),

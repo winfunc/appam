@@ -20,6 +20,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use crate::llm::{ChatMessage, Role, ToolSpec};
+use crate::tools::{ToolConcurrency, ToolContext};
 
 /// Core trait for AI agents.
 ///
@@ -131,6 +132,45 @@ pub trait Agent: Send + Sync {
     /// to provide tool resolution logic.
     fn execute_tool(&self, name: &str, _args: serde_json::Value) -> Result<serde_json::Value> {
         Err(anyhow::anyhow!("Tool not found: {}", name))
+    }
+
+    /// Resolve a tool by name and execute it with runtime metadata.
+    ///
+    /// The default implementation preserves backward compatibility by
+    /// delegating to the legacy synchronous `execute_tool(...)` path and
+    /// ignoring the provided context. Agents backed by a `ToolRegistry`
+    /// should override this to call the registry's async/context-aware
+    /// execution entrypoint.
+    async fn execute_tool_with_context(
+        &self,
+        name: &str,
+        _ctx: ToolContext,
+        args: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.execute_tool(name, args)
+    }
+
+    /// Return the concurrency policy for a specific tool.
+    ///
+    /// Legacy agents default every tool to serial execution. Registry-backed
+    /// agents should override this to surface per-tool policies from the
+    /// underlying tool registry.
+    fn tool_concurrency(&self, _name: &str) -> ToolConcurrency {
+        ToolConcurrency::SerialOnly
+    }
+
+    /// Whether Appam should request provider-side parallel tool batching.
+    ///
+    /// This only affects provider request wiring. Runtime execution still
+    /// additionally requires `max_concurrent_tool_executions() > 1` and that
+    /// every returned tool in the batch be marked `ParallelSafe`.
+    fn provider_parallel_tool_calls(&self) -> bool {
+        false
+    }
+
+    /// Maximum number of concurrent tool executions allowed for one batch.
+    fn max_concurrent_tool_executions(&self) -> usize {
+        1
     }
 
     /// Run the agent with a user prompt.

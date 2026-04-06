@@ -29,7 +29,7 @@ use std::sync::Arc;
 use super::builder::AgentBuilder;
 use super::runtime_agent::RuntimeAgent;
 use crate::llm::LlmProvider;
-use crate::tools::Tool;
+use crate::tools::{AsyncTool, Tool};
 
 /// Extension trait for quick agent creation
 pub trait AgentQuick {
@@ -329,6 +329,11 @@ impl AgentBuilder {
     pub fn tool_dyn(self, tool: Arc<dyn Tool>) -> Self {
         self.with_tool(tool)
     }
+
+    /// Add a single async/context-aware tool.
+    pub fn async_tool_dyn(self, tool: Arc<dyn AsyncTool>) -> Self {
+        self.with_async_tool(tool)
+    }
 }
 
 /// Extension trait for adding tools to AgentBuilder without Arc wrapping
@@ -340,6 +345,18 @@ pub trait AgentBuilderToolExt {
 impl AgentBuilderToolExt for AgentBuilder {
     fn tool<T: Tool + 'static>(self, tool: T) -> Self {
         self.with_tool(Arc::new(tool))
+    }
+}
+
+/// Extension trait for adding async/context-aware tools to AgentBuilder.
+pub trait AgentBuilderAsyncToolExt {
+    /// Add a single async tool instance, automatically wrapping it.
+    fn async_tool<T: AsyncTool + 'static>(self, tool: T) -> Self;
+}
+
+impl AgentBuilderAsyncToolExt for AgentBuilder {
+    fn async_tool<T: AsyncTool + 'static>(self, tool: T) -> Self {
+        self.with_async_tool(Arc::new(tool))
     }
 }
 

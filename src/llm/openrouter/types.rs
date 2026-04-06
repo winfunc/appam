@@ -445,7 +445,7 @@ impl Default for CompletionRequest {
             messages: Vec::new(),
             tools: None,
             tool_choice: None,
-            parallel_tool_calls: Some(true),
+            parallel_tool_calls: Some(false),
             temperature: None,
             max_tokens: None,
             top_p: None,

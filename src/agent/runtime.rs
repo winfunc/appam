@@ -4,6 +4,7 @@
 //! executing tool calls, and managing session state.
 
 use anyhow::{Context, Result};
+use futures::stream::{self, StreamExt};
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use tracing::{debug, info, instrument, warn};
@@ -18,6 +19,7 @@ use crate::llm::{
     ChatMessage, DynamicLlmClient, LlmClient, LlmProvider, Role, UnifiedMessage, UnifiedRole,
 };
 use crate::logging::write_session_log;
+use crate::tools::{ToolConcurrency, ToolContext};
 
 fn select_usage_model(cfg: &crate::config::AppConfig, provider: &LlmProvider) -> String {
     match provider {
@@ -356,6 +358,229 @@ fn emit_stream_error_event(
     }
 }
 
+/// Apply per-agent parallel tool-call defaults to provider configuration.
+///
+/// Appam intentionally keeps provider-side tool batching disabled unless the
+/// active agent explicitly enables it. Anthropic requires a slightly different
+/// mapping because the parallel control lives inside `tool_choice`.
+fn apply_parallel_tool_call_defaults<A: Agent + ?Sized>(
+    agent: &A,
+    cfg: &mut crate::config::AppConfig,
+) {
+    let parallel_tool_calls = agent.provider_parallel_tool_calls();
+    cfg.openai.parallel_tool_calls = Some(parallel_tool_calls);
+    cfg.openrouter.parallel_tool_calls = Some(parallel_tool_calls);
+    cfg.openai_codex.parallel_tool_calls = Some(parallel_tool_calls);
+
+    if cfg.anthropic.tool_choice.is_none() {
+        cfg.anthropic.tool_choice = Some(crate::llm::anthropic::ToolChoiceConfig::Auto {
+            disable_parallel_tool_use: !parallel_tool_calls,
+        });
+    }
+}
+
+#[derive(Debug)]
+struct PreparedToolCall {
+    call: crate::llm::ToolCall,
+    args: serde_json::Value,
+}
+
+#[derive(Debug)]
+struct ToolExecutionOutcome {
+    call: crate::llm::ToolCall,
+    result_json: serde_json::Value,
+    success: bool,
+    duration_ms: f64,
+}
+
+fn prepare_tool_calls(
+    pending_tool_calls: &[crate::llm::ToolCall],
+    multi_consumer: &MultiConsumer,
+    emitted_tool_calls: &Arc<Mutex<HashSet<String>>>,
+) -> Result<Vec<PreparedToolCall>> {
+    let mut prepared = Vec::with_capacity(pending_tool_calls.len());
+
+    for call in pending_tool_calls {
+        info!(tool = %call.function.name, "Executing tool");
+
+        let mut should_emit_start = false;
+        let args_snapshot = call.function.arguments.clone();
+
+        if !args_snapshot.trim().is_empty() {
+            let mut seen = emitted_tool_calls
+                .lock()
+                .expect("tool call tracker poisoned");
+            should_emit_start = seen.insert(call.id.clone());
+        }
+
+        if should_emit_start {
+            multi_consumer.on_event(&StreamEvent::ToolCallStarted {
+                tool_name: call.function.name.clone(),
+                arguments: args_snapshot.clone(),
+            })?;
+        }
+
+        debug!(
+            tool = %call.function.name,
+            args_len = call.function.arguments.len(),
+            "Parsing tool arguments"
+        );
+        let args = serde_json::from_str(&call.function.arguments).with_context(|| {
+            format!(
+                "Failed to parse arguments for tool {} ({} bytes)",
+                call.function.name,
+                call.function.arguments.len()
+            )
+        })?;
+
+        prepared.push(PreparedToolCall {
+            call: call.clone(),
+            args,
+        });
+    }
+
+    Ok(prepared)
+}
+
+async fn run_tool_call<A: Agent + ?Sized>(
+    agent: &A,
+    session_id: &str,
+    prepared: PreparedToolCall,
+) -> ToolExecutionOutcome {
+    let start_time = std::time::Instant::now();
+    let ctx = ToolContext::new(
+        session_id.to_string(),
+        agent.name().to_string(),
+        prepared.call.id.clone(),
+    );
+    let result = agent
+        .execute_tool_with_context(&prepared.call.function.name, ctx, prepared.args)
+        .await;
+    let elapsed = start_time.elapsed();
+    let duration_ms = elapsed.as_secs_f64() * 1000.0;
+
+    match result {
+        Ok(value) => ToolExecutionOutcome {
+            call: prepared.call,
+            result_json: value,
+            success: true,
+            duration_ms,
+        },
+        Err(error) => ToolExecutionOutcome {
+            call: prepared.call,
+            result_json: serde_json::json!({
+                "success": false,
+                "error": error.to_string()
+            }),
+            success: false,
+            duration_ms,
+        },
+    }
+}
+
+async fn execute_pending_tool_calls<A: Agent + ?Sized>(
+    agent: &A,
+    session_id: &str,
+    pending_tool_calls: &[crate::llm::ToolCall],
+    messages: &mut Vec<ChatMessage>,
+    multi_consumer: &MultiConsumer,
+    emitted_tool_calls: &Arc<Mutex<HashSet<String>>>,
+) -> Result<bool> {
+    let required_completion_tools = agent.required_completion_tools().cloned();
+    let prepared_calls =
+        prepare_tool_calls(pending_tool_calls, multi_consumer, emitted_tool_calls)?;
+
+    let should_run_parallel = agent.provider_parallel_tool_calls()
+        && agent.max_concurrent_tool_executions() > 1
+        && prepared_calls.len() > 1
+        && prepared_calls.iter().all(|prepared| {
+            agent.tool_concurrency(&prepared.call.function.name) == ToolConcurrency::ParallelSafe
+        });
+
+    let outcomes = if should_run_parallel {
+        let max_concurrency = agent.max_concurrent_tool_executions();
+        let mut indexed: Vec<(usize, ToolExecutionOutcome)> =
+            stream::iter(prepared_calls.into_iter().enumerate().map(
+                |(index, prepared)| async move {
+                    (index, run_tool_call(agent, session_id, prepared).await)
+                },
+            ))
+            .buffer_unordered(max_concurrency)
+            .collect()
+            .await;
+        indexed.sort_by_key(|(index, _)| *index);
+        indexed.into_iter().map(|(_, outcome)| outcome).collect()
+    } else {
+        let mut outcomes = Vec::with_capacity(prepared_calls.len());
+        for prepared in prepared_calls {
+            outcomes.push(run_tool_call(agent, session_id, prepared).await);
+        }
+        outcomes
+    };
+
+    let mut completed_via_required_tool = false;
+
+    for outcome in outcomes {
+        if outcome.success {
+            info!(tool = %outcome.call.function.name, "Tool succeeded");
+            multi_consumer.on_event(&StreamEvent::ToolCallCompleted {
+                tool_name: outcome.call.function.name.clone(),
+                result: outcome.result_json.clone(),
+                success: true,
+                duration_ms: outcome.duration_ms,
+            })?;
+        } else {
+            let error_message = outcome.result_json["error"]
+                .as_str()
+                .unwrap_or("Tool execution failed")
+                .to_string();
+            info!(
+                tool = %outcome.call.function.name,
+                error = %error_message,
+                "Tool failed"
+            );
+            multi_consumer.on_event(&StreamEvent::ToolCallFailed {
+                tool_name: outcome.call.function.name.clone(),
+                error: error_message,
+            })?;
+        }
+
+        if outcome.success
+            && required_completion_tools
+                .as_ref()
+                .is_some_and(|tools| tools.contains(&outcome.call.function.name))
+        {
+            completed_via_required_tool = true;
+        }
+
+        let content_str = match &outcome.result_json {
+            serde_json::Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        messages.push(ChatMessage {
+            role: Role::Tool,
+            name: Some(outcome.call.function.name.clone()),
+            tool_call_id: Some(outcome.call.id.clone()),
+            content: Some(content_str),
+            tool_calls: None,
+            reasoning: None,
+            raw_content_blocks: None,
+            tool_metadata: Some(crate::llm::ToolExecutionMetadata {
+                success: outcome.success,
+                duration_ms: outcome.duration_ms,
+                tool_name: outcome.call.function.name.clone(),
+                arguments: outcome.call.function.arguments.clone(),
+            }),
+            timestamp: Some(chrono::Utc::now()),
+            id: None,
+            provider_response_id: None,
+            status: None,
+        });
+    }
+
+    Ok(completed_via_required_tool)
+}
+
 /// Default agent run implementation with console output.
 ///
 /// Orchestrates a multi-turn conversation with tool calling and streams output
@@ -427,6 +652,7 @@ pub async fn default_run_streaming<A: Agent + ?Sized>(
 
     // Apply agent-specific configuration overrides (programmatic config has highest priority)
     agent.apply_config_overrides(&mut cfg);
+    apply_parallel_tool_call_defaults(agent, &mut cfg);
 
     let logs_dir = crate::logging::init_logging(&cfg.logging)?;
 
@@ -755,107 +981,15 @@ pub async fn default_run_streaming<A: Agent + ?Sized>(
             messages.push(msg);
         }
 
-        // Execute tool calls
-        let required_completion_tools = agent.required_completion_tools().cloned();
-        let mut completed_via_required_tool = false;
-        for call in pending_tool_calls.iter() {
-            info!(tool = %call.function.name, "Executing tool");
-
-            let mut should_emit_start = false;
-            let args_snapshot = call.function.arguments.clone();
-
-            if !args_snapshot.trim().is_empty() {
-                let mut seen = emitted_tool_calls
-                    .lock()
-                    .expect("tool call tracker poisoned");
-                // `insert` returns true if this is the first time we've seen this call ID
-                should_emit_start = seen.insert(call.id.clone());
-            }
-
-            if should_emit_start {
-                multi_consumer.on_event(&StreamEvent::ToolCallStarted {
-                    tool_name: call.function.name.clone(),
-                    arguments: args_snapshot.clone(),
-                })?;
-            }
-
-            debug!(
-                tool = %call.function.name,
-                args_len = call.function.arguments.len(),
-                "Parsing tool arguments"
-            );
-            let args: serde_json::Value = serde_json::from_str(&call.function.arguments)
-                .with_context(|| {
-                    format!(
-                        "Failed to parse arguments for tool {} ({} bytes)",
-                        call.function.name,
-                        call.function.arguments.len()
-                    )
-                })?;
-            let start_time = std::time::Instant::now();
-            let result = agent.execute_tool(&call.function.name, args);
-            let elapsed = start_time.elapsed();
-            let duration_ms = elapsed.as_secs_f64() * 1000.0;
-
-            let (result_json, success) = match result {
-                Ok(value) => {
-                    info!(tool = %call.function.name, "Tool succeeded");
-                    multi_consumer.on_event(&StreamEvent::ToolCallCompleted {
-                        tool_name: call.function.name.clone(),
-                        result: value.clone(),
-                        success: true,
-                        duration_ms,
-                    })?;
-                    (value, true)
-                }
-                Err(e) => {
-                    info!(tool = %call.function.name, error = %e, "Tool failed");
-                    multi_consumer.on_event(&StreamEvent::ToolCallFailed {
-                        tool_name: call.function.name.clone(),
-                        error: e.to_string(),
-                    })?;
-                    let error_result = serde_json::json!({
-                        "success": false,
-                        "error": e.to_string()
-                    });
-                    (error_result, false)
-                }
-            };
-
-            if success
-                && required_completion_tools
-                    .as_ref()
-                    .is_some_and(|tools| tools.contains(&call.function.name))
-            {
-                completed_via_required_tool = true;
-            }
-
-            // Add tool result to messages with execution metadata
-            // Handle string results directly (for XML-like formatted responses)
-            let content_str = match &result_json {
-                serde_json::Value::String(s) => s.clone(),
-                other => other.to_string(),
-            };
-            messages.push(ChatMessage {
-                role: Role::Tool,
-                name: Some(call.function.name.clone()),
-                tool_call_id: Some(call.id.clone()),
-                content: Some(content_str),
-                tool_calls: None,
-                reasoning: None,
-                raw_content_blocks: None, // Tool results don't need raw blocks
-                tool_metadata: Some(crate::llm::ToolExecutionMetadata {
-                    success,
-                    duration_ms: elapsed.as_secs_f64() * 1000.0,
-                    tool_name: call.function.name.clone(),
-                    arguments: call.function.arguments.clone(),
-                }),
-                timestamp: Some(chrono::Utc::now()),
-                id: None,
-                provider_response_id: None,
-                status: None,
-            });
-        }
+        let completed_via_required_tool = execute_pending_tool_calls(
+            agent,
+            &session_id,
+            &pending_tool_calls,
+            &mut messages,
+            &multi_consumer,
+            &emitted_tool_calls,
+        )
+        .await?;
 
         if completed_via_required_tool {
             info!(
@@ -941,6 +1075,7 @@ pub async fn default_run_streaming_with_messages<A: Agent + ?Sized>(
 
     // Apply agent-specific configuration overrides
     agent.apply_config_overrides(&mut cfg);
+    apply_parallel_tool_call_defaults(agent, &mut cfg);
 
     let logs_dir = crate::logging::init_logging(&cfg.logging)?;
 
@@ -1255,104 +1390,15 @@ pub async fn default_run_streaming_with_messages<A: Agent + ?Sized>(
             messages.push(msg);
         }
 
-        // Execute tool calls
-        let required_completion_tools = agent.required_completion_tools().cloned();
-        let mut completed_via_required_tool = false;
-        for call in pending_tool_calls.iter() {
-            info!(tool = %call.function.name, "Executing tool");
-
-            let mut should_emit_start = false;
-            let args_snapshot = call.function.arguments.clone();
-
-            if !args_snapshot.trim().is_empty() {
-                let mut seen = emitted_tool_calls
-                    .lock()
-                    .expect("tool call tracker poisoned");
-                should_emit_start = seen.insert(call.id.clone());
-            }
-
-            if should_emit_start {
-                multi_consumer.on_event(&StreamEvent::ToolCallStarted {
-                    tool_name: call.function.name.clone(),
-                    arguments: args_snapshot.clone(),
-                })?;
-            }
-
-            debug!(
-                tool = %call.function.name,
-                args_len = call.function.arguments.len(),
-                "Parsing tool arguments"
-            );
-            let args: serde_json::Value = serde_json::from_str(&call.function.arguments)
-                .with_context(|| {
-                    format!(
-                        "Failed to parse arguments for tool {} ({} bytes)",
-                        call.function.name,
-                        call.function.arguments.len()
-                    )
-                })?;
-            let start_time = std::time::Instant::now();
-            let result = agent.execute_tool(&call.function.name, args);
-            let elapsed = start_time.elapsed();
-            let duration_ms = elapsed.as_secs_f64() * 1000.0;
-
-            let (result_json, success) = match result {
-                Ok(value) => {
-                    info!(tool = %call.function.name, "Tool succeeded");
-                    multi_consumer.on_event(&StreamEvent::ToolCallCompleted {
-                        tool_name: call.function.name.clone(),
-                        result: value.clone(),
-                        success: true,
-                        duration_ms,
-                    })?;
-                    (value, true)
-                }
-                Err(e) => {
-                    info!(tool = %call.function.name, error = %e, "Tool failed");
-                    multi_consumer.on_event(&StreamEvent::ToolCallFailed {
-                        tool_name: call.function.name.clone(),
-                        error: e.to_string(),
-                    })?;
-                    let error_result = serde_json::json!({
-                        "success": false,
-                        "error": e.to_string()
-                    });
-                    (error_result, false)
-                }
-            };
-
-            if success
-                && required_completion_tools
-                    .as_ref()
-                    .is_some_and(|tools| tools.contains(&call.function.name))
-            {
-                completed_via_required_tool = true;
-            }
-
-            let content_str = match &result_json {
-                serde_json::Value::String(s) => s.clone(),
-                other => other.to_string(),
-            };
-            messages.push(ChatMessage {
-                role: Role::Tool,
-                name: Some(call.function.name.clone()),
-                tool_call_id: Some(call.id.clone()),
-                content: Some(content_str),
-                tool_calls: None,
-                reasoning: None,
-                raw_content_blocks: None,
-                tool_metadata: Some(crate::llm::ToolExecutionMetadata {
-                    success,
-                    duration_ms: elapsed.as_secs_f64() * 1000.0,
-                    tool_name: call.function.name.clone(),
-                    arguments: call.function.arguments.clone(),
-                }),
-                timestamp: Some(chrono::Utc::now()),
-                id: None,
-                provider_response_id: None,
-                status: None,
-            });
-        }
+        let completed_via_required_tool = execute_pending_tool_calls(
+            agent,
+            &session_id,
+            &pending_tool_calls,
+            &mut messages,
+            &multi_consumer,
+            &emitted_tool_calls,
+        )
+        .await?;
 
         if completed_via_required_tool {
             info!(
@@ -1462,6 +1508,7 @@ pub async fn continue_session_streaming<A: Agent + ?Sized>(
 
     // Apply agent-specific configuration overrides (programmatic config has highest priority)
     agent.apply_config_overrides(&mut cfg);
+    apply_parallel_tool_call_defaults(agent, &mut cfg);
 
     let logs_dir = crate::logging::init_logging(&cfg.logging)?;
 
@@ -1811,106 +1858,15 @@ pub async fn continue_session_streaming<A: Agent + ?Sized>(
             messages.push(msg);
         }
 
-        // Execute tool calls
-        let required_completion_tools = agent.required_completion_tools().cloned();
-        let mut completed_via_required_tool = false;
-        for call in pending_tool_calls.iter() {
-            info!(tool = %call.function.name, "Executing tool");
-
-            let mut should_emit_start = false;
-            let args_snapshot = call.function.arguments.clone();
-
-            if !args_snapshot.trim().is_empty() {
-                let mut seen = emitted_tool_calls
-                    .lock()
-                    .expect("tool call tracker poisoned");
-                should_emit_start = seen.insert(call.id.clone());
-            }
-
-            if should_emit_start {
-                multi_consumer.on_event(&StreamEvent::ToolCallStarted {
-                    tool_name: call.function.name.clone(),
-                    arguments: args_snapshot.clone(),
-                })?;
-            }
-
-            debug!(
-                tool = %call.function.name,
-                args_len = call.function.arguments.len(),
-                "Parsing tool arguments"
-            );
-            let args: serde_json::Value = serde_json::from_str(&call.function.arguments)
-                .with_context(|| {
-                    format!(
-                        "Failed to parse arguments for tool {} ({} bytes)",
-                        call.function.name,
-                        call.function.arguments.len()
-                    )
-                })?;
-            let start_time = std::time::Instant::now();
-            let result = agent.execute_tool(&call.function.name, args);
-            let elapsed = start_time.elapsed();
-            let duration_ms = elapsed.as_secs_f64() * 1000.0;
-
-            let (result_json, success) = match result {
-                Ok(value) => {
-                    info!(tool = %call.function.name, "Tool succeeded");
-                    multi_consumer.on_event(&StreamEvent::ToolCallCompleted {
-                        tool_name: call.function.name.clone(),
-                        result: value.clone(),
-                        success: true,
-                        duration_ms,
-                    })?;
-                    (value, true)
-                }
-                Err(e) => {
-                    info!(tool = %call.function.name, error = %e, "Tool failed");
-                    multi_consumer.on_event(&StreamEvent::ToolCallFailed {
-                        tool_name: call.function.name.clone(),
-                        error: e.to_string(),
-                    })?;
-                    let error_result = serde_json::json!({
-                        "success": false,
-                        "error": e.to_string()
-                    });
-                    (error_result, false)
-                }
-            };
-
-            if success
-                && required_completion_tools
-                    .as_ref()
-                    .is_some_and(|tools| tools.contains(&call.function.name))
-            {
-                completed_via_required_tool = true;
-            }
-
-            // Add tool result to messages with execution metadata
-            // Handle string results directly (for XML-like formatted responses)
-            let content_str = match &result_json {
-                serde_json::Value::String(s) => s.clone(),
-                other => other.to_string(),
-            };
-            messages.push(ChatMessage {
-                role: Role::Tool,
-                name: Some(call.function.name.clone()),
-                tool_call_id: Some(call.id.clone()),
-                content: Some(content_str),
-                tool_calls: None,
-                reasoning: None,
-                raw_content_blocks: None, // Tool results don't need raw blocks
-                tool_metadata: Some(crate::llm::ToolExecutionMetadata {
-                    success,
-                    duration_ms: elapsed.as_secs_f64() * 1000.0,
-                    tool_name: call.function.name.clone(),
-                    arguments: call.function.arguments.clone(),
-                }),
-                timestamp: Some(chrono::Utc::now()),
-                id: None,
-                provider_response_id: None,
-                status: None,
-            });
-        }
+        let completed_via_required_tool = execute_pending_tool_calls(
+            agent,
+            session_id,
+            &pending_tool_calls,
+            &mut messages,
+            &multi_consumer,
+            &emitted_tool_calls,
+        )
+        .await?;
 
         if completed_via_required_tool {
             info!(
@@ -2064,16 +2020,19 @@ fn tool_specs_to_unified(specs: &[crate::llm::ToolSpec]) -> Vec<crate::llm::Unif
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_finalized_tool_calls, required_completion_continuation_decision, select_usage_model,
+        apply_finalized_tool_calls, execute_pending_tool_calls,
+        required_completion_continuation_decision, select_usage_model,
         RequiredCompletionContinuationDecision,
     };
     use crate::agent::AgentBuilder;
     use crate::config::AppConfig;
     use crate::llm::{ChatMessage, Role, ToolCall, ToolCallFunction, ToolSpec};
-    use crate::tools::Tool;
+    use crate::tools::{AsyncTool, Tool, ToolConcurrency, ToolContext};
     use anyhow::Result;
+    use async_trait::async_trait;
     use serde_json::json;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
 
     /// Minimal tool used to exercise completion-tool continuation logic.
     ///
@@ -2273,5 +2232,153 @@ mod tests {
 
         let decision = required_completion_continuation_decision(&agent, &messages);
         assert_eq!(decision, RequiredCompletionContinuationDecision::None);
+    }
+
+    struct SleepTool {
+        name: &'static str,
+        concurrency: ToolConcurrency,
+    }
+
+    #[async_trait]
+    impl AsyncTool for SleepTool {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn spec(&self) -> Result<ToolSpec> {
+            Ok(serde_json::from_value(json!({
+                "type": "function",
+                "name": self.name,
+                "description": "Sleep tool",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "delay_ms": {
+                            "type": "number",
+                            "description": "Delay in milliseconds"
+                        }
+                    },
+                    "required": ["delay_ms"]
+                }
+            }))?)
+        }
+
+        fn concurrency(&self) -> ToolConcurrency {
+            self.concurrency
+        }
+
+        async fn execute(
+            &self,
+            _ctx: ToolContext,
+            args: serde_json::Value,
+        ) -> Result<serde_json::Value> {
+            let delay_ms = args["delay_ms"].as_u64().unwrap_or(0);
+            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+            Ok(json!({
+                "tool": self.name,
+                "delay_ms": delay_ms
+            }))
+        }
+    }
+
+    fn tool_call(name: &str, id: &str, delay_ms: u64) -> ToolCall {
+        ToolCall {
+            id: id.to_string(),
+            type_field: "function".to_string(),
+            function: ToolCallFunction {
+                name: name.to_string(),
+                arguments: json!({ "delay_ms": delay_ms }).to_string(),
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_pending_tool_calls_runs_parallel_safe_batches_concurrently() {
+        let agent = AgentBuilder::new("parallel-agent")
+            .system_prompt("test")
+            .with_async_tools(vec![
+                Arc::new(SleepTool {
+                    name: "sleep_a",
+                    concurrency: ToolConcurrency::ParallelSafe,
+                }) as Arc<dyn AsyncTool>,
+                Arc::new(SleepTool {
+                    name: "sleep_b",
+                    concurrency: ToolConcurrency::ParallelSafe,
+                }) as Arc<dyn AsyncTool>,
+            ])
+            .enable_parallel_tool_calls(4)
+            .build()
+            .unwrap();
+
+        let mut messages = Vec::new();
+        let pending = vec![
+            tool_call("sleep_a", "call-1", 80),
+            tool_call("sleep_b", "call-2", 80),
+        ];
+        let consumer = crate::agent::streaming::MultiConsumer::new();
+        let emitted = Arc::new(Mutex::new(std::collections::HashSet::new()));
+
+        let started = Instant::now();
+        let completed = execute_pending_tool_calls(
+            &agent,
+            "session-parallel",
+            &pending,
+            &mut messages,
+            &consumer,
+            &emitted,
+        )
+        .await
+        .unwrap();
+        let elapsed = started.elapsed();
+
+        assert!(!completed);
+        assert!(elapsed < Duration::from_millis(140));
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].tool_call_id.as_deref(), Some("call-1"));
+        assert_eq!(messages[1].tool_call_id.as_deref(), Some("call-2"));
+    }
+
+    #[tokio::test]
+    async fn execute_pending_tool_calls_serializes_mixed_batches() {
+        let agent = AgentBuilder::new("serial-agent")
+            .system_prompt("test")
+            .with_async_tools(vec![
+                Arc::new(SleepTool {
+                    name: "sleep_parallel",
+                    concurrency: ToolConcurrency::ParallelSafe,
+                }) as Arc<dyn AsyncTool>,
+                Arc::new(SleepTool {
+                    name: "sleep_serial",
+                    concurrency: ToolConcurrency::SerialOnly,
+                }) as Arc<dyn AsyncTool>,
+            ])
+            .enable_parallel_tool_calls(4)
+            .build()
+            .unwrap();
+
+        let mut messages = Vec::new();
+        let pending = vec![
+            tool_call("sleep_parallel", "call-1", 70),
+            tool_call("sleep_serial", "call-2", 70),
+        ];
+        let consumer = crate::agent::streaming::MultiConsumer::new();
+        let emitted = Arc::new(Mutex::new(std::collections::HashSet::new()));
+
+        let started = Instant::now();
+        execute_pending_tool_calls(
+            &agent,
+            "session-serial",
+            &pending,
+            &mut messages,
+            &consumer,
+            &emitted,
+        )
+        .await
+        .unwrap();
+        let elapsed = started.elapsed();
+
+        assert!(elapsed >= Duration::from_millis(130));
+        assert_eq!(messages[0].tool_call_id.as_deref(), Some("call-1"));
+        assert_eq!(messages[1].tool_call_id.as_deref(), Some("call-2"));
     }
 }

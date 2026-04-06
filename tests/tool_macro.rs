@@ -36,6 +36,54 @@ fn to_upper(text: String) -> anyhow::Result<String> {
     Ok(text.to_uppercase())
 }
 
+#[derive(Default)]
+struct CounterState {
+    count: u64,
+}
+
+#[tool(description = "Increment the session counter")]
+async fn bump_counter(
+    ctx: ToolContext,
+    counter: SessionState<CounterState>,
+    #[arg(description = "Amount to add")] amount: u64,
+) -> anyhow::Result<String> {
+    let total = counter.update(|state| {
+        state.count += amount;
+        state.count
+    })?;
+    Ok(format!("{}:{}", ctx.session_id(), total))
+}
+
+#[derive(Clone)]
+struct PrefixState {
+    prefix: String,
+}
+
+#[tool(description = "Prefix the input with app-managed state")]
+async fn prefix_message(
+    state: State<PrefixState>,
+    #[arg(description = "Message to prefix")] message: String,
+) -> anyhow::Result<String> {
+    Ok(format!("{}{}", state.prefix, message))
+}
+
+#[derive(Deserialize, Schema)]
+struct AppendInput {
+    #[description = "Value to append"]
+    value: String,
+}
+
+#[tool(description = "Append a value into session state")]
+async fn append_value(
+    items: SessionState<Vec<String>>,
+    input: AppendInput,
+) -> anyhow::Result<usize> {
+    items.update(|values| {
+        values.push(input.value);
+        values.len()
+    })
+}
+
 #[test]
 fn test_echo_tool_macro() {
     let tool = echo_tool();
@@ -141,4 +189,84 @@ fn test_tool_macro_error_handling() {
 
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("Division by zero"));
+}
+
+#[tokio::test]
+async fn test_async_tool_macro_injected_params_are_excluded_from_schema() {
+    let tool = bump_counter();
+    let spec = tool.spec().unwrap();
+    let properties = spec
+        .parameters
+        .get("properties")
+        .and_then(|value| value.as_object())
+        .unwrap();
+
+    assert!(properties.contains_key("amount"));
+    assert!(!properties.contains_key("ctx"));
+    assert!(!properties.contains_key("counter"));
+}
+
+#[tokio::test]
+async fn test_async_tool_macro_session_state_execution() {
+    let registry = ToolRegistry::new();
+    registry.session_state_with::<CounterState, _>(CounterState::default);
+    registry.register_async(Arc::new(bump_counter()));
+
+    let first = registry
+        .execute_with_context(
+            ToolContext::new("session-1", "agent", "call-1"),
+            "bump_counter",
+            json!({"amount": 2}),
+        )
+        .await
+        .unwrap();
+    let second = registry
+        .execute_with_context(
+            ToolContext::new("session-1", "agent", "call-2"),
+            "bump_counter",
+            json!({"amount": 3}),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(first["output"], "session-1:2");
+    assert_eq!(second["output"], "session-1:5");
+}
+
+#[tokio::test]
+async fn test_async_tool_macro_app_state_execution() {
+    let registry = ToolRegistry::new();
+    registry.manage(PrefixState {
+        prefix: "hello-".to_string(),
+    });
+    registry.register_async(Arc::new(prefix_message()));
+
+    let result = registry
+        .execute_with_context(
+            ToolContext::new("session-1", "agent", "call-1"),
+            "prefix_message",
+            json!({"message": "world"}),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result["output"], "hello-world");
+}
+
+#[tokio::test]
+async fn test_async_tool_macro_typed_input_with_injected_state() {
+    let registry = ToolRegistry::new();
+    registry.session_state_with::<Vec<String>, _>(Vec::new);
+    registry.register_async(Arc::new(append_value()));
+
+    let result = registry
+        .execute_with_context(
+            ToolContext::new("session-typed", "agent", "call-1"),
+            "append_value",
+            json!({"value": "alpha"}),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result["output"], 1);
 }

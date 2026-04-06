@@ -87,7 +87,7 @@ impl OpenRouterCompletionsClient {
                 .tcp_keepalive(std::time::Duration::from_secs(60))
                 .tcp_nodelay(true)
                 .gzip(true)
-                .user_agent("appam/0.1.0");
+                .user_agent("appam/0.1.1");
 
             if let Some(addrs) = ctx.resolved_addrs() {
                 builder = builder.resolve_to_addrs(ctx.host(), addrs);
@@ -321,7 +321,7 @@ impl OpenRouterCompletionsClient {
             messages: completion_messages,
             tools: tool_specs,
             tool_choice: Some(ToolChoice::String("auto".to_string())),
-            parallel_tool_calls: Some(true),
+            parallel_tool_calls: Some(self.cfg.parallel_tool_calls.unwrap_or(false)),
             temperature: self.cfg.temperature,
             max_tokens: self.cfg.max_output_tokens,
             top_p: self.cfg.top_p,

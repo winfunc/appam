@@ -188,6 +188,13 @@ pub struct OpenRouterConfig {
     #[serde(default)]
     pub max_output_tokens: Option<u32>,
 
+    /// Whether provider-side parallel tool batching should be enabled.
+    ///
+    /// Appam keeps this disabled by default and only turns it on when the
+    /// owning agent explicitly opts in.
+    #[serde(default)]
+    pub parallel_tool_calls: Option<bool>,
+
     /// Temperature (0.0-2.0)
     #[serde(default)]
     pub temperature: Option<f32>,
@@ -241,6 +248,7 @@ impl Default for OpenRouterConfig {
             x_title: None,
             stream: Self::default_stream(),
             max_output_tokens: Some(9000),
+            parallel_tool_calls: Some(false),
             temperature: None,
             top_p: None,
             reasoning: None,

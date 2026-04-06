@@ -10,7 +10,7 @@ use async_trait::async_trait;
 
 use super::Agent;
 use crate::llm::ToolSpec;
-use crate::tools::ToolRegistry;
+use crate::tools::{AsyncTool, ToolConcurrency, ToolContext, ToolRegistry};
 
 /// Agent built programmatically at runtime.
 ///
@@ -102,6 +102,10 @@ pub struct RuntimeAgent {
     max_continuations: usize,
     /// Custom continuation message (if None, uses default)
     continuation_message: Option<String>,
+    /// Whether provider-side parallel tool batching should be enabled.
+    provider_parallel_tool_calls: bool,
+    /// Maximum number of concurrent tool executions per batch.
+    max_concurrent_tool_executions: usize,
 }
 
 impl RuntimeAgent {
@@ -174,6 +178,8 @@ impl RuntimeAgent {
             required_completion_tools: None,
             max_continuations: 2,
             continuation_message: None,
+            provider_parallel_tool_calls: false,
+            max_concurrent_tool_executions: 1,
         }
     }
 
@@ -223,6 +229,8 @@ impl RuntimeAgent {
         required_completion_tools: Option<Vec<String>>,
         max_continuations: usize,
         continuation_message: Option<String>,
+        provider_parallel_tool_calls: bool,
+        max_concurrent_tool_executions: usize,
     ) -> Self {
         Self {
             name: name.into(),
@@ -266,6 +274,8 @@ impl RuntimeAgent {
             required_completion_tools,
             max_continuations,
             continuation_message,
+            provider_parallel_tool_calls,
+            max_concurrent_tool_executions: max_concurrent_tool_executions.max(1),
         }
     }
 
@@ -346,6 +356,11 @@ impl RuntimeAgent {
     /// ```
     pub fn add_tool(&mut self, tool: Arc<dyn crate::tools::Tool>) {
         self.registry.register(tool);
+    }
+
+    /// Add an async/context-aware tool to this agent's registry.
+    pub fn add_async_tool(&mut self, tool: Arc<dyn AsyncTool>) {
+        self.registry.register_async(tool);
     }
 
     /// Get the list of required completion tools.
@@ -555,19 +570,34 @@ impl Agent for RuntimeAgent {
     }
 
     fn available_tools(&self) -> Result<Vec<ToolSpec>> {
-        let mut specs = Vec::new();
-
-        for tool_name in self.registry.list() {
-            if let Some(tool) = self.registry.resolve(&tool_name) {
-                specs.push(tool.spec()?);
-            }
-        }
-
-        Ok(specs)
+        self.registry.specs()
     }
 
     fn execute_tool(&self, name: &str, args: serde_json::Value) -> Result<serde_json::Value> {
         self.registry.execute(name, args)
+    }
+
+    async fn execute_tool_with_context(
+        &self,
+        name: &str,
+        ctx: ToolContext,
+        args: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.registry.execute_with_context(ctx, name, args).await
+    }
+
+    fn tool_concurrency(&self, name: &str) -> ToolConcurrency {
+        self.registry
+            .concurrency(name)
+            .unwrap_or(ToolConcurrency::SerialOnly)
+    }
+
+    fn provider_parallel_tool_calls(&self) -> bool {
+        self.provider_parallel_tool_calls
+    }
+
+    fn max_concurrent_tool_executions(&self) -> usize {
+        self.max_concurrent_tool_executions
     }
 
     // Uses default run implementation from runtime module

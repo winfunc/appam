@@ -9,7 +9,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 
 use super::runtime_agent::RuntimeAgent;
-use crate::tools::{Tool, ToolRegistry};
+use crate::tools::{AsyncTool, Tool, ToolRegistry};
 
 /// Provider-specific reasoning configuration.
 ///
@@ -91,6 +91,7 @@ pub struct AgentBuilder {
     system_prompt_file: Option<std::path::PathBuf>,
     registry: Option<Arc<ToolRegistry>>,
     tools: Vec<Arc<dyn Tool>>,
+    async_tools: Vec<Arc<dyn AsyncTool>>,
 
     // API keys (override config file and env vars)
     anthropic_api_key: Option<String>,
@@ -140,6 +141,8 @@ pub struct AgentBuilder {
     history_enabled: Option<bool>,
     history_db_path: Option<std::path::PathBuf>,
     history_auto_save: Option<bool>,
+    provider_parallel_tool_calls: bool,
+    max_concurrent_tool_executions: usize,
 
     // Session continuation configuration
     required_completion_tools: Vec<Arc<dyn Tool>>,
@@ -168,6 +171,7 @@ impl AgentBuilder {
             system_prompt_file: None,
             registry: None,
             tools: Vec::new(),
+            async_tools: Vec::new(),
             anthropic_api_key: None,
             openrouter_api_key: None,
             vertex_api_key: None,
@@ -201,6 +205,8 @@ impl AgentBuilder {
             history_enabled: None,
             history_db_path: None,
             history_auto_save: None,
+            provider_parallel_tool_calls: false,
+            max_concurrent_tool_executions: 1,
             required_completion_tools: Vec::new(),
             max_continuations: 2,
             continuation_message: None,
@@ -1223,6 +1229,12 @@ impl AgentBuilder {
         self
     }
 
+    /// Add a single async/context-aware tool to the agent.
+    pub fn with_async_tool(mut self, tool: Arc<dyn AsyncTool>) -> Self {
+        self.async_tools.push(tool);
+        self
+    }
+
     /// Add multiple tools at once.
     ///
     /// # Examples
@@ -1252,6 +1264,12 @@ impl AgentBuilder {
         self
     }
 
+    /// Add multiple async/context-aware tools at once.
+    pub fn with_async_tools(mut self, tools: Vec<Arc<dyn AsyncTool>>) -> Self {
+        self.async_tools.extend(tools);
+        self
+    }
+
     /// Provide a custom tool registry.
     ///
     /// If not provided, a new empty registry will be created and tools
@@ -1272,6 +1290,52 @@ impl AgentBuilder {
     /// ```
     pub fn with_registry(mut self, registry: Arc<ToolRegistry>) -> Self {
         self.registry = Some(registry);
+        self
+    }
+
+    fn ensure_registry(&mut self) -> Arc<ToolRegistry> {
+        Arc::clone(
+            self.registry
+                .get_or_insert_with(|| Arc::new(ToolRegistry::new())),
+        )
+    }
+
+    /// Register an app-scoped managed state value.
+    pub fn manage<T>(mut self, state: T) -> Self
+    where
+        T: Send + Sync + 'static,
+    {
+        self.ensure_registry().manage(state);
+        self
+    }
+
+    /// Register a lazily initialized session-scoped state type using `Default`.
+    pub fn session_state<T>(mut self) -> Self
+    where
+        T: Default + Send + Sync + 'static,
+    {
+        self.ensure_registry()
+            .session_state_with::<T, _>(T::default);
+        self
+    }
+
+    /// Register a lazily initialized session-scoped state type with a custom initializer.
+    pub fn session_state_with<T, F>(mut self, init: F) -> Self
+    where
+        T: Send + Sync + 'static,
+        F: Fn() -> T + Send + Sync + 'static,
+    {
+        self.ensure_registry().session_state_with::<T, F>(init);
+        self
+    }
+
+    /// Enable provider-side tool batching and runtime parallel execution.
+    ///
+    /// The runtime still executes sequentially unless a returned batch contains
+    /// only `ParallelSafe` tools.
+    pub fn enable_parallel_tool_calls(mut self, max_concurrency: usize) -> Self {
+        self.provider_parallel_tool_calls = true;
+        self.max_concurrent_tool_executions = max_concurrency.max(1);
         self
     }
 
@@ -1320,6 +1384,10 @@ impl AgentBuilder {
         // Register tools
         for tool in self.tools {
             registry.register(tool);
+        }
+
+        for tool in self.async_tools {
+            registry.register_async(tool);
         }
 
         // Register required completion tools (they also need to be in the registry)
@@ -1383,6 +1451,8 @@ impl AgentBuilder {
             required_tool_names,
             self.max_continuations,
             self.continuation_message,
+            self.provider_parallel_tool_calls,
+            self.max_concurrent_tool_executions,
         );
 
         Ok(agent)
