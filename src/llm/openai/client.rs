@@ -1281,12 +1281,6 @@ impl LlmClient for OpenAIClient {
                             error = %err,
                             "OpenAI request failed, retrying after backoff"
                         );
-                        eprintln!(
-                            "⚠️  OpenAI request failed (attempt {}/{}), retrying in {:.1}s...",
-                            attempt,
-                            max_attempts,
-                            wait.as_secs_f64()
-                        );
                         sleep(wait).await;
                         continue;
                     }
@@ -1301,29 +1295,22 @@ impl LlmClient for OpenAIClient {
                 let response_headers = response.headers().clone();
                 let body = response.text().await.unwrap_or_default();
 
-                error!(status = %status, attempt = attempt, body = %body, "OpenAI error response");
-
                 if attempt < max_attempts && Self::should_retry_status(status) {
                     let retry_after = Self::retry_after_from_headers(&response_headers);
                     let wait = Self::compute_retry_delay(&retry_config, attempt, retry_after);
-                    info!(
+                    warn!(
                         attempt = attempt,
                         max_attempts = max_attempts,
                         wait_secs = wait.as_secs_f64(),
                         status = %status,
-                        "Retrying OpenAI request after API error"
-                    );
-                    eprintln!(
-                        "⚠️  OpenAI API error {} (attempt {}/{}), retrying in {:.1}s...",
-                        status,
-                        attempt,
-                        max_attempts,
-                        wait.as_secs_f64()
+                        body = %body,
+                        "OpenAI API error, retrying after backoff"
                     );
                     sleep(wait).await;
                     continue;
                 }
 
+                error!(status = %status, attempt = attempt, body = %body, "OpenAI error response");
                 self.record_failed_exchange(Some(status), &request_payload, body.clone());
                 return Err(anyhow!("OpenAI error ({}): {}", status, body));
             }
@@ -1358,12 +1345,6 @@ impl LlmClient for OpenAIClient {
                                 error_kind = reason.label(),
                                 error_message = reason.message(),
                                 "OpenAI streaming error, retrying"
-                            );
-                            eprintln!(
-                                "⚠️  OpenAI streaming error (attempt {}/{}), retrying in {:.1}s...",
-                                attempt,
-                                max_attempts,
-                                wait.as_secs_f64()
                             );
                             sleep(wait).await;
                             continue;

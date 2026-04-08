@@ -1879,19 +1879,13 @@ impl LlmClient for AnthropicClient {
                                 let wait_duration =
                                     self.calculate_network_retry_wait(network_attempt);
 
-                                error!(
+                                warn!(
+                                    provider = %provider,
+                                    attempt = network_attempt,
+                                    max_attempts = network_max_attempts,
                                     error = %e,
-                                    network_attempt = network_attempt,
-                                    network_max_attempts = network_max_attempts,
                                     wait_secs = wait_duration.as_secs_f64(),
                                     "Network error, retrying after backoff"
-                                );
-                                eprintln!(
-                                    "⚠️  {} network error (attempt {}/{}), retrying in {:.1}s...",
-                                    provider,
-                                    network_attempt,
-                                    network_max_attempts,
-                                    wait_duration.as_secs_f64()
                                 );
 
                                 tokio::time::sleep(wait_duration).await;
@@ -1950,19 +1944,14 @@ impl LlmClient for AnthropicClient {
                             retry_after.or(error_response.error.retry_after.map(|s| s as u64)),
                         );
 
-                        info!(
+                        warn!(
+                            provider = %provider,
                             attempt = attempt,
                             max_attempts = max_attempts,
                             wait_secs = wait_duration.as_secs_f64(),
                             error_type = %error_response.error.error_type,
+                            error_message = %error_response.error.message,
                             "Rate limit or overload error, retrying after backoff"
-                        );
-                        eprintln!(
-                            "⚠️  Anthropic {} (attempt {}/{}), retrying in {:.1}s...",
-                            error_response.error.error_type,
-                            attempt,
-                            max_attempts,
-                            wait_duration.as_secs_f64()
                         );
 
                         // Wait before retry
@@ -2003,19 +1992,13 @@ impl LlmClient for AnthropicClient {
                         // Calculate wait duration
                         let wait_duration = self.calculate_retry_wait(attempt, retry_after);
 
-                        info!(
+                        warn!(
+                            provider = %provider,
                             attempt = attempt,
                             max_attempts = max_attempts,
                             wait_secs = wait_duration.as_secs_f64(),
                             status = %status,
                             "Transient HTTP error, retrying after backoff"
-                        );
-                        eprintln!(
-                            "⚠️  Anthropic HTTP error {} (attempt {}/{}), retrying in {:.1}s...",
-                            status,
-                            attempt,
-                            max_attempts,
-                            wait_duration.as_secs_f64()
                         );
 
                         // Wait before retry
@@ -2093,34 +2076,23 @@ impl LlmClient for AnthropicClient {
                             // Log based on error type
                             match retryable_error {
                                 RetryableStreamError::ApiError { error_data } => {
-                                    info!(
+                                    warn!(
+                                        provider = %provider,
                                         attempt = attempt,
                                         max_attempts = max_attempts,
                                         wait_secs = wait_duration.as_secs_f64(),
                                         error_type = %error_data.error_type,
                                         "Retryable API stream error (overload/rate limit), retrying after backoff"
                                     );
-                                    eprintln!(
-                                        "⚠️  Anthropic streaming {} (attempt {}/{}), retrying in {:.1}s...",
-                                        error_data.error_type,
-                                        attempt,
-                                        max_attempts,
-                                        wait_duration.as_secs_f64()
-                                    );
                                 }
                                 RetryableStreamError::NetworkError { message } => {
-                                    info!(
+                                    warn!(
+                                        provider = %provider,
                                         attempt = attempt,
                                         max_attempts = max_attempts,
                                         wait_secs = wait_duration.as_secs_f64(),
                                         error = %message,
                                         "Retryable network stream error (connection interrupted), retrying after backoff"
-                                    );
-                                    eprintln!(
-                                        "⚠️  Anthropic streaming network error (attempt {}/{}), retrying in {:.1}s...",
-                                        attempt,
-                                        max_attempts,
-                                        wait_duration.as_secs_f64()
                                     );
                                 }
                             }
