@@ -95,7 +95,7 @@ impl ReasoningDetail {
     /// # Returns
     ///
     /// - Summary: Returns the summary text
-    /// - Encrypted: Returns "[REDACTED]"
+    /// - Encrypted: Returns `"[REDACTED]"`
     /// - Text: Returns the reasoning text
     pub fn extract_text(&self) -> &str {
         match self {

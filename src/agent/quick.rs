@@ -1,7 +1,9 @@
-//! Quick constructors and simplified agent creation
+//! Ergonomic shortcuts for building agents with minimal boilerplate.
 //!
-//! This module provides ergonomic shortcuts for creating agents with minimal boilerplate.
-//! Perfect for rapid prototyping, scripts, and simple use cases.
+//! This module intentionally favors fast setup over exhaustive configurability.
+//! It is a good fit for scripts, prototypes, smoke tests, and small services
+//! that still want Appam's runtime, streaming, and tool orchestration without
+//! writing a large builder chain.
 //!
 //! # Examples
 //!
@@ -31,18 +33,23 @@ use super::runtime_agent::RuntimeAgent;
 use crate::llm::LlmProvider;
 use crate::tools::{AsyncTool, Tool};
 
-/// Extension trait for quick agent creation
+/// Convenience constructor trait implemented by [`RuntimeAgent`].
 pub trait AgentQuick {
-    /// Create an agent with minimal configuration
+    /// Create an agent with minimal configuration.
     ///
-    /// This is the fastest way to create an agent - just provide a model, prompt, and tools.
-    /// All other settings use smart defaults.
+    /// This is the fastest way to get a fully working [`RuntimeAgent`]:
+    /// provide a model string, a system prompt, and any tools you want exposed
+    /// to the model.
     ///
-    /// # Arguments
+    /// The helper performs three things:
     ///
-    /// * `model` - Model identifier (e.g., "anthropic/claude-sonnet-4-5")
-    /// * `prompt` - System prompt for the agent
-    /// * `tools` - Vector of tools (no Arc wrapping needed!)
+    /// 1. infers a provider from the model string
+    /// 2. creates a [`crate::agent::AgentBuilder`] with common runtime defaults
+    /// 3. returns the built [`RuntimeAgent`]
+    ///
+    /// The exact defaults are intentionally modest and may evolve with the
+    /// crate. If you need precise provider tuning, switch to
+    /// [`crate::agent::AgentBuilder`].
     ///
     /// # Provider Detection
     ///
@@ -54,13 +61,12 @@ pub trait AgentQuick {
     /// - `openrouter/*` → OpenRouter
     /// - Others → OpenRouter (default)
     ///
-    /// # Smart Defaults
+    /// # Default Behavior
     ///
-    /// - Temperature: 0.7
-    /// - Max tokens: 4096
-    /// - Top-p: 0.9
-    /// - Retry: 3 attempts on failure
-    /// - Logging: Info level
+    /// Today this helper sets common sampling defaults (`temperature`,
+    /// `max_tokens`, and `top_p`) and leaves the rest of the runtime on the
+    /// same provider defaults Appam would normally use. Anthropic-family runs
+    /// also receive Appam's standard retry configuration through the builder.
     ///
     /// # Examples
     ///
@@ -124,13 +130,14 @@ impl AgentQuick for RuntimeAgent {
     }
 }
 
-/// Helper struct for ergonomic agent creation
+/// Namespaced helper for ergonomic agent construction.
 ///
-/// Use `Agent::quick()` or `Agent::new()` to create agents with minimal ceremony.
+/// This type exists only to provide discoverable associated functions such as
+/// [`Agent::quick`] and [`Agent::new`]. It does not hold any runtime state.
 pub struct Agent;
 
 impl Agent {
-    /// Create an agent with minimal configuration (one-liner)
+    /// Create a [`RuntimeAgent`] with the quick-constructor defaults.
     ///
     /// # Examples
     ///
@@ -154,9 +161,10 @@ impl Agent {
         RuntimeAgent::quick(model, prompt, tools)
     }
 
-    /// Quick constructor with automatic tool wrapping
+    /// Create a quick agent while automatically wrapping tools in `Arc`.
     ///
-    /// Convenience method that wraps tool instances in Arc automatically.
+    /// This is useful when you have concrete tool values and do not want to
+    /// allocate `Arc<dyn Tool>` values at the call site.
     pub fn quick_with<T: crate::tools::Tool + 'static>(
         model: impl Into<String>,
         prompt: impl Into<String>,
@@ -169,7 +177,11 @@ impl Agent {
         RuntimeAgent::quick(model, prompt, wrapped_tools)
     }
 
-    /// Create an agent with a simplified builder
+    /// Create a builder with provider detection already applied.
+    ///
+    /// This is the ergonomic middle ground between [`Agent::quick`] and a
+    /// fully manual [`AgentBuilder::new`](crate::agent::AgentBuilder::new)
+    /// call.
     ///
     /// # Examples
     ///
@@ -193,7 +205,12 @@ impl Agent {
     }
 }
 
-/// Detect LLM provider from model string
+/// Infer an [`LlmProvider`] from a shared model string.
+///
+/// The helper understands both provider-prefixed forms such as
+/// `"openai/gpt-5.4"` and common bare model names such as `"gpt-5.4"` or
+/// `"gemini-2.5-flash"`. Unknown strings intentionally fall back to
+/// OpenRouter Responses because that backend can proxy many upstream models.
 ///
 /// # Examples
 ///
@@ -247,7 +264,10 @@ pub fn detect_provider(model: &str) -> LlmProvider {
     LlmProvider::OpenRouterResponses
 }
 
-/// Extract a short model name for agent naming
+/// Extract the model leaf used by [`AgentQuick::quick`] for generated names.
+///
+/// This helper strips a leading provider prefix when present and otherwise
+/// returns the original string.
 ///
 /// # Examples
 ///
@@ -286,10 +306,10 @@ impl AgentBuilder {
         self.system_prompt(prompt)
     }
 
-    /// Add multiple tools without Arc wrapping
+    /// Add multiple tools without `Arc` wrapping.
     ///
-    /// The tools can be either already-wrapped Arc<dyn Tool> or
-    /// tool instances that will be automatically wrapped.
+    /// The tools can be either already-wrapped `Arc<dyn Tool>` values or tool
+    /// instances that will be automatically wrapped.
     ///
     /// # Examples
     ///

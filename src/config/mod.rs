@@ -1,11 +1,16 @@
-//! Configuration system with hierarchical loading.
+//! Global configuration types and precedence helpers.
 //!
-//! Supports both global configuration (`appam.toml`) and per-agent configuration,
-//! with environment variable overrides. Configuration is layered:
-//! 1. Default values
-//! 2. Global config file
-//! 3. Agent config file
-//! 4. Environment variables (highest priority)
+//! Appam keeps configuration resolution explicit and deterministic. The shared
+//! precedence order across the crate is:
+//!
+//! 1. built-in defaults
+//! 2. global configuration files
+//! 3. per-agent overrides
+//! 4. environment variables
+//!
+//! The types in this module model the global layer and expose helpers for
+//! loading and mutating it safely before the runtime constructs a provider
+//! client.
 
 pub mod builder;
 pub use builder::{AgentConfigBuilder, AppConfigBuilder};
@@ -23,10 +28,15 @@ use crate::llm::openrouter::{OpenRouterConfig, ReasoningConfig};
 use crate::llm::vertex::{VertexConfig, VertexThinkingConfig};
 use crate::llm::LlmProvider;
 
-/// Global application configuration.
+/// Root configuration object for Appam.
 ///
-/// Defines settings that apply across all agents: LLM provider configuration,
-/// logging settings, web API settings, and rate limits.
+/// This type holds provider selection plus the provider-specific configuration
+/// blocks consumed by the runtime. It also carries cross-cutting concerns such
+/// as logging, history, and the legacy web configuration surface.
+///
+/// Most users either construct it through [`AppConfigBuilder`], load it from a
+/// TOML file with [`load_global_config`], or start from
+/// [`load_config_from_env`].
 ///
 /// # Provider Selection
 ///
@@ -116,9 +126,11 @@ pub enum TraceFormat {
     Detailed,
 }
 
-/// Logging configuration.
+/// Logging and trace-output configuration.
 ///
-/// Controls where logs are written and what format to use.
+/// `LoggingConfig` controls Appam's own structured logs plus conversation trace
+/// capture. The two are intentionally separate so callers can keep traces
+/// without verbose framework logs, or vice versa.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoggingConfig {
     /// Directory for log files and session transcripts
@@ -192,10 +204,11 @@ impl LoggingConfig {
     }
 }
 
-/// Session history configuration.
+/// Persistent session-history configuration.
 ///
-/// Controls persistent storage of agent sessions in SQLite for conversation
-/// continuation and historical analysis.
+/// History uses SQLite so sessions can be resumed, inspected, or listed across
+/// process restarts. When disabled, the higher-level history API remains
+/// available but behaves as a no-op surface.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryConfig {
     /// Enable session history persistence
@@ -233,9 +246,11 @@ impl HistoryConfig {
     }
 }
 
-/// Web API configuration.
+/// Configuration for the legacy Axum-based web surface.
 ///
-/// Settings for the axum-based web server.
+/// The full web API is intentionally disabled at runtime today, but the
+/// configuration type remains part of the public API for backward compatibility
+/// and for the trace visualizer helpers under [`crate::web`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebConfig {
     /// Host address to bind to
@@ -277,7 +292,7 @@ impl WebConfig {
     }
 }
 
-/// Rate limiting configuration.
+/// Rate-limiting settings for the legacy web surface.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RateLimitConfig {
     /// Requests per minute per IP
@@ -307,10 +322,10 @@ impl RateLimitConfig {
     }
 }
 
-/// Load configuration from defaults and environment variables only.
+/// Load configuration from built-in defaults plus environment variables.
 ///
-/// Does NOT load from any config file. Use this for programmatic agent creation
-/// where you don't want automatic file loading.
+/// This helper intentionally skips all file I/O. Use it when a program wants
+/// an explicit config object driven only by process environment.
 ///
 /// # Environment Variables
 ///
@@ -373,7 +388,7 @@ pub fn load_config_from_env() -> Result<AppConfig> {
     Ok(cfg)
 }
 
-/// Load global application configuration from a file.
+/// Load global configuration from a TOML file, then apply env overrides.
 ///
 /// Reads configuration from the specified path, applies environment variable
 /// overrides, and validates provider-specific features.
@@ -402,10 +417,10 @@ pub fn load_global_config(path: &Path) -> Result<AppConfig> {
     Ok(cfg)
 }
 
-/// Apply environment variable overrides to a configuration.
+/// Apply environment-variable overrides in place.
 ///
-/// This function mutates the provided configuration by applying
-/// environment variable overrides.
+/// The mutation is explicit so callers can load configuration from multiple
+/// sources first, then apply environment precedence once at the end.
 ///
 /// # Errors
 ///

@@ -1,18 +1,9 @@
-//! Experimental web API server with SSE streaming and session management.
+//! Legacy web helpers and the trace visualizer server.
 //!
-//! Provides a REST API for managing agents and chat sessions with:
-//! - Server-Sent Events (SSE) for streaming responses
-//! - Session persistence and continuation
-//! - Multi-agent support
-//! - Rate limiting and CORS
-//! - Comprehensive error handling
-//!
-//! # Status
-//!
-//! This module is an old experimental surface and is currently disabled for
-//! security reasons. The implementation is kept in-tree for future reference,
-//! but [`serve`] will refuse to start the API until the surface is redesigned
-//! with authentication and a tighter trust model.
+//! Most of this module is historical scaffolding from Appam's old web API
+//! experiment. The full agent-management API is intentionally hard-disabled for
+//! security reasons, but the trace visualizer helpers remain available for
+//! local inspection of trace files.
 
 pub mod fs_operations;
 pub mod middleware;
@@ -35,7 +26,7 @@ use tracing::info;
 /// Hard-disable the legacy web API while retaining the code for future work.
 const EXPERIMENTAL_WEB_API_ENABLED: bool = false;
 
-/// Start the web API server.
+/// Attempt to start the legacy web API server.
 ///
 /// Creates an axum server with all routes, middleware, and state configured.
 /// Binds to the specified host and port and runs until shutdown.
@@ -94,7 +85,7 @@ pub async fn serve(host: String, port: u16, agents_dir: std::path::PathBuf) -> a
     Ok(())
 }
 
-/// Start the trace visualizer web server.
+/// Start the trace visualizer server.
 ///
 /// Creates a lightweight Axum server serving the trace visualizer UI and API
 /// endpoints for listing and retrieving trace files.

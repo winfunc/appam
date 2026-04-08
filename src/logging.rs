@@ -1,7 +1,9 @@
-//! Logging and session transcript management.
+//! Structured runtime logging plus persisted session transcripts.
 //!
-//! Provides structured logging via `tracing` and session transcript persistence
-//! for debugging, evaluation, and compliance.
+//! Appam keeps tracing logs and per-session artifacts separate so operators can
+//! choose how much runtime detail to retain. This module initializes the global
+//! `tracing` subscriber and provides a helper for writing standalone session
+//! snapshots.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -18,7 +20,7 @@ use tracing_subscriber::{fmt, EnvFilter};
 
 use crate::config::{LogFormat, LoggingConfig};
 
-/// Guards for logging appenders that must be kept alive.
+/// Guards for non-blocking appenders that must remain alive for logging to work.
 ///
 /// Stores non-blocking writer guards to prevent premature drop, which would
 /// cause log events to be lost.
@@ -27,7 +29,7 @@ pub struct LoggingGuards {
     _json_guard: Option<WorkerGuard>,
 }
 
-/// Initialize structured logging with configurable formats.
+/// Initialize the global `tracing` subscriber for Appam.
 ///
 /// Sets up a tracing subscriber with:
 /// - Optional human-readable console output
@@ -152,7 +154,7 @@ pub fn init_logging(logging: &LoggingConfig) -> Result<PathBuf> {
     Ok(logging.logs_dir.clone())
 }
 
-/// Write a session transcript to a JSON file.
+/// Write a complete session snapshot to a JSON file.
 ///
 /// Persists the full conversation history, metadata, and timestamps for a
 /// single agent interaction. Session logs enable:

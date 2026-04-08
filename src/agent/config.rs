@@ -1,7 +1,8 @@
-//! Agent configuration structures.
+//! TOML-backed agent configuration schema.
 //!
-//! Defines the TOML schema for agent definitions, including metadata, model
-//! selection, system prompts, and tool configurations.
+//! These types model the on-disk agent format consumed by [`super::TomlAgent`].
+//! They intentionally stay close to the file layout so validation and upgrade
+//! behavior remain easy to reason about.
 
 use std::path::PathBuf;
 
@@ -9,10 +10,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::tools::loader::ToolConfig;
 
-/// Agent configuration loaded from TOML.
+/// Full agent configuration loaded from TOML.
 ///
-/// Defines all settings needed to instantiate and run an agent: name, model,
-/// system prompt, and tools.
+/// The runtime treats this type as declarative input only. Prompt contents and
+/// tool implementations are resolved relative to the agent file at load time.
 ///
 /// # Example TOML
 ///
@@ -42,9 +43,7 @@ pub struct AgentConfig {
     pub tools: Vec<ToolConfig>,
 }
 
-/// Agent metadata.
-///
-/// Core agent identification and configuration.
+/// Core metadata block stored under `[agent]`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentMetadata {
     /// Agent name (must be unique)

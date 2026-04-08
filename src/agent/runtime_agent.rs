@@ -1,7 +1,10 @@
-//! Runtime agent implementation for programmatically-built agents.
+//! Concrete runtime-backed agent used by the Rust SDK.
 //!
-//! Provides a concrete `Agent` implementation that can be built entirely in Rust
-//! without TOML configuration files.
+//! [`RuntimeAgent`] is Appam's in-memory agent implementation. It stores prompt
+//! text, tool registry ownership, and configuration overrides, then delegates
+//! actual execution to the shared runtime in [`super::runtime`]. This keeps the
+//! execution semantics identical between builder-created agents and TOML-loaded
+//! agents while still allowing ergonomic Rust-side construction.
 
 use std::sync::Arc;
 
@@ -12,10 +15,13 @@ use super::Agent;
 use crate::llm::ToolSpec;
 use crate::tools::{AsyncTool, ToolConcurrency, ToolContext, ToolRegistry};
 
-/// Agent built programmatically at runtime.
+/// Programmatic agent implementation backed by a [`ToolRegistry`].
 ///
-/// This agent implementation is designed to be constructed using the `AgentBuilder`
-/// or directly in Rust code, without requiring TOML configuration files.
+/// `RuntimeAgent` is the type returned by [`crate::agent::AgentBuilder`] and
+/// the quick constructors in [`crate::agent::quick`]. It is the right choice
+/// when you want to keep agent construction entirely in Rust, inject tools or
+/// managed state directly, and still reuse Appam's built-in streaming,
+/// continuation, trace, and history behavior.
 ///
 /// # Examples
 ///
@@ -109,13 +115,11 @@ pub struct RuntimeAgent {
 }
 
 impl RuntimeAgent {
-    /// Create a new runtime agent.
+    /// Create a new runtime agent from a prompt string and a tool registry.
     ///
-    /// # Parameters
-    ///
-    /// - `name`: Unique agent identifier
-    /// - `system_prompt`: System prompt defining agent behavior and capabilities
-    /// - `registry`: Tool registry with available tools
+    /// This constructor is intentionally small: it does not inspect
+    /// environment variables, load configuration files, or validate provider
+    /// credentials. Those concerns are deferred until runtime execution.
     ///
     /// # Examples
     ///
@@ -279,17 +283,20 @@ impl RuntimeAgent {
         }
     }
 
-    /// Set the provider for this agent.
+    /// Set a provider override for this agent instance.
     ///
-    /// Overrides the global provider configuration for this specific agent.
+    /// This bypasses provider selection from the shared application config for
+    /// this agent only.
     pub fn with_provider(mut self, provider: crate::llm::LlmProvider) -> Self {
         self.provider = Some(provider);
         self
     }
 
-    /// Set the model for this agent.
+    /// Set the model override for this agent.
     ///
-    /// This overrides any model specified in the global configuration.
+    /// This takes precedence over any model specified by global configuration
+    /// or environment variables once the runtime constructs the provider
+    /// client.
     ///
     /// # Examples
     ///
@@ -299,37 +306,40 @@ impl RuntimeAgent {
     /// # use std::sync::Arc;
     /// # let registry = Arc::new(ToolRegistry::new());
     /// let agent = RuntimeAgent::new("agent", "prompt", registry)
-    ///     .with_model("anthropic/claude-3.5-sonnet");
+    ///     .with_model("anthropic/claude-sonnet-4-5");
     /// ```
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
         self.model = Some(model.into());
         self
     }
 
-    /// Get the provider override for this agent.
-    ///
-    /// Returns None if no provider override is set (uses global config).
+    /// Return the provider override, if one has been set.
     pub fn provider(&self) -> Option<crate::llm::LlmProvider> {
         self.provider.clone()
     }
 
-    /// Get the model to use for this agent.
+    /// Return the configured model string for this agent.
     ///
-    /// Returns the configured model or a default if not specified.
+    /// If no explicit model override has been stored, this returns Appam's
+    /// current runtime fallback model string.
     pub fn model(&self) -> String {
         self.model
             .clone()
             .unwrap_or_else(|| "openai/gpt-5".to_string())
     }
 
-    /// Get a reference to the tool registry.
+    /// Borrow the registry that resolves this agent's tools.
+    ///
+    /// The registry is shared by reference so callers can inspect or extend it
+    /// before a run starts.
     pub fn registry(&self) -> &Arc<ToolRegistry> {
         &self.registry
     }
 
     /// Update the system prompt.
     ///
-    /// Replaces the existing system prompt with a new one.
+    /// Replaces the prompt text used for future runs. Existing persisted
+    /// sessions are unaffected.
     pub fn set_system_prompt(&mut self, prompt: impl Into<String>) {
         self.system_prompt = prompt.into();
     }
@@ -359,6 +369,9 @@ impl RuntimeAgent {
     }
 
     /// Add an async/context-aware tool to this agent's registry.
+    ///
+    /// Use this for tools that need [`crate::tools::ToolContext`] or may need
+    /// to opt into parallel-safe execution.
     pub fn add_async_tool(&mut self, tool: Arc<dyn AsyncTool>) {
         self.registry.register_async(tool);
     }

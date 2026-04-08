@@ -16,6 +16,12 @@
 //! Reusable OpenAI reasoning and text-verbosity types are still re-exported via
 //! `crate::llm::openai`, while the transport and credential management remain
 //! isolated here.
+//!
+//! # Security
+//!
+//! Cached Codex authentication files and resolved access tokens are sensitive
+//! local credentials. They should never be logged, persisted in traces, or
+//! copied into user-facing diagnostics.
 
 pub mod auth;
 pub mod client;

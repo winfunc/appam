@@ -1,98 +1,101 @@
-//! Appam: AI Agent Framework
+//! Rust agent orchestration library for tool-using, long-horizon, traceable AI systems.
 //!
-//! A comprehensive framework for building AI agents with minimal configuration.
-//! Create powerful agents by writing TOML configs, tool definitions, and tool
-//! implementations in Rust or Python.
+//! Appam is designed for agent workloads where the hard parts are operational:
+//! repeated tool use across multiple turns, streaming UX, session persistence,
+//! trace capture, and provider portability. The shared runtime stays provider
+//! agnostic while the provider modules own wire-format quirks, auth, retry, and
+//! streaming details.
 //!
-//! # Overview
+//! # What Appam Gives You
 //!
-//! Appam provides:
-//! - **Agent system**: Define agents with system prompts and tool sets
-//! - **Tool framework**: Implement tools in Rust or Python with automatic loading
-//! - **LLM integration**: Streaming OpenRouter client with tool calling
-//! - **OpenAI Codex auth**: Local OAuth cache for ChatGPT Codex subscription access
-//! - **Configuration**: Hierarchical TOML-based configuration
-//! - **Interfaces**: Built-in TUI and web API
-//! - **Logging**: Structured tracing and session transcripts
+//! - Rust-first agent construction through [`AgentBuilder`], [`RuntimeAgent`],
+//!   and the shortcut constructors in [`agent::quick`]
+//! - typed and untyped tool definitions via [`Tool`], [`AsyncTool`],
+//!   [`ToolRegistry`], [`tool`], and [`Schema`]
+//! - streaming-first execution through [`agent::streaming::StreamEvent`],
+//!   [`agent::streaming_builder::StreamBuilder`], and built-in consumers
+//! - durable session history through [`SessionHistory`]
+//! - portable LLM routing across Anthropic, OpenAI, OpenAI Codex, OpenRouter,
+//!   Vertex, Azure, and Bedrock via [`LlmProvider`] and [`DynamicLlmClient`]
 //!
-//! # Quick Start
+//! # Recommended Entry Points
 //!
-//! ## Option 1: Pure Rust SDK (No TOML Required)
-//!
-//! Build agents entirely in Rust with the builder API:
+//! Use [`Agent::quick`](crate::agent::quick::Agent::quick) when you want the
+//! smallest working setup:
 //!
 //! ```no_run
 //! use appam::prelude::*;
-//! use anyhow::Result;
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<()> {
+//!     let agent = Agent::quick(
+//!         "anthropic/claude-sonnet-4-5",
+//!         "You are a concise Rust assistant.",
+//!         vec![],
+//!     )?;
+//!
+//!     agent
+//!         .stream("Explain ownership in Rust in three sentences.")
+//!         .on_content(|text| print!("{text}"))
+//!         .run()
+//!         .await?;
+//!
+//!     println!();
+//!     Ok(())
+//! }
+//! ```
+//!
+//! Use [`AgentBuilder`] when you need explicit runtime control:
+//!
+//! ```no_run
+//! use appam::prelude::*;
 //! use std::sync::Arc;
 //! # use serde_json::{json, Value};
-//! # struct MyTool;
-//! # impl Tool for MyTool {
-//! #     fn name(&self) -> &str { "my_tool" }
+//! # struct EchoTool;
+//! # impl Tool for EchoTool {
+//! #     fn name(&self) -> &str { "echo" }
 //! #     fn spec(&self) -> Result<ToolSpec> {
 //! #         Ok(serde_json::from_value(json!({
 //! #             "type": "function",
 //! #             "function": {
-//! #                 "name": "my_tool",
-//! #                 "description": "Example tool",
-//! #                 "parameters": {"type": "object", "properties": {}}
+//! #                 "name": "echo",
+//! #                 "description": "Echo a message",
+//! #                 "parameters": {
+//! #                     "type": "object",
+//! #                     "properties": {
+//! #                         "message": {"type": "string"}
+//! #                     },
+//! #                     "required": ["message"]
+//! #                 }
 //! #             }
 //! #         }))?)
 //! #     }
-//! #     fn execute(&self, _: Value) -> Result<Value> { Ok(json!({"output": "result"})) }
+//! #     fn execute(&self, args: Value) -> Result<Value> {
+//! #         Ok(json!({ "output": args["message"].clone() }))
+//! #     }
 //! # }
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<()> {
-//!     let agent = AgentBuilder::new("my-agent")
-//!         .model("openai/gpt-4o-mini")
-//!         .system_prompt("You are a helpful AI assistant.")
-//!         .with_tool(Arc::new(MyTool))
+//!     let agent = AgentBuilder::new("assistant")
+//!         .provider(LlmProvider::OpenAI)
+//!         .model("openai/gpt-5.4")
+//!         .system_prompt("You are a careful assistant. Use tools before guessing.")
+//!         .with_tool(Arc::new(EchoTool))
+//!         .enable_history()
 //!         .build()?;
 //!
-//!     agent.run("Hello!").await?;
+//!     agent.run("Say hello via the echo tool.").await?;
 //!     Ok(())
 //! }
 //! ```
 //!
-//! ## Option 2: TOML Configuration
-//!
-//! Create an agent configuration file (`agent.toml`):
-//!
-//! ```toml
-//! [agent]
-//! name = "assistant"
-//! model = "openai/gpt-5"
-//! system_prompt = "prompt.txt"
-//!
-//! [[tools]]
-//! name = "bash"
-//! schema = "tools/bash.json"
-//! implementation = { type = "python", script = "tools/bash.py" }
-//! ```
-//!
-//! Load and run the agent:
+//! Use [`TomlAgent`] when configuration lives on disk and needs to be extended
+//! with Rust tools at runtime:
 //!
 //! ```no_run
 //! use appam::prelude::*;
-//! use anyhow::Result;
-//!
-//! #[tokio::main]
-//! async fn main() -> Result<()> {
-//!     let agent = TomlAgent::from_file("agent.toml")?;
-//!     agent.run("What can you do?").await?;
-//!     Ok(())
-//! }
-//! ```
-//!
-//! ## Option 3: Hybrid Approach
-//!
-//! Load from TOML and extend with Rust tools:
-//!
-//! ```no_run
-//! # use appam::prelude::*;
-//! # use anyhow::Result;
-//! # use std::sync::Arc;
+//! use std::sync::Arc;
 //! # use serde_json::{json, Value};
 //! # struct CustomTool;
 //! # impl Tool for CustomTool {
@@ -102,118 +105,55 @@
 //! #             "type": "function",
 //! #             "function": {
 //! #                 "name": "custom",
-//! #                 "description": "Custom tool",
+//! #                 "description": "Example custom tool",
 //! #                 "parameters": {"type": "object", "properties": {}}
 //! #             }
 //! #         }))?)
 //! #     }
-//! #     fn execute(&self, _: Value) -> Result<Value> { Ok(json!({"output": "result"})) }
+//! #     fn execute(&self, _: Value) -> Result<Value> { Ok(json!({"ok": true})) }
 //! # }
-//! # async fn example() -> Result<()> {
-//! let agent = TomlAgent::from_file("agent.toml")?
-//!     .with_additional_tool(Arc::new(CustomTool));
 //!
-//! agent.run("Use custom tool").await?;
-//! # Ok(())
-//! # }
+//! #[tokio::main]
+//! async fn main() -> Result<()> {
+//!     let agent = TomlAgent::from_file("agent.toml")?
+//!         .with_additional_tool(Arc::new(CustomTool));
+//!
+//!     agent.run("Use the custom tool if it helps.").await?;
+//!     Ok(())
+//! }
 //! ```
 //!
 //! # Architecture
 //!
-//! ## Agents
+//! Appam keeps the crate split along subsystem boundaries:
 //!
-//! Agents are defined by:
-//! - A **system prompt** that establishes behavior and capabilities
-//! - A **tool set** that provides executable functions
-//! - A **model** that powers the agent's reasoning
+//! - [`agent`] owns runtime orchestration, continuation logic, stream events,
+//!   and session history
+//! - [`tools`] owns schemas, execution traits, managed state, and runtime lookup
+//! - [`llm`] owns provider-neutral message types plus provider-specific clients
+//! - [`config`] owns global configuration, env overrides, and builder APIs
+//! - [`logging`] owns tracing setup and persisted session logs
 //!
-//! The `Agent` trait provides the core interface. Use `TomlAgent` to load
-//! agents from configuration files.
+//! # Security and Operational Notes
 //!
-//! ## Tools
+//! - Tool calls are model output and must be treated as untrusted input.
+//! - Managed state access fails closed when state was not registered.
+//! - The legacy web API surface remains intentionally disabled; the trace
+//!   visualizer helpers in [`web`] remain available.
+//! - Provider-specific secrets are never meant to be logged or embedded in
+//!   trace artifacts.
 //!
-//! Tools are executable functions exposed to the LLM. Each tool has:
-//! - A **JSON schema** defining parameters and description
-//! - An **implementation** in Rust or Python
+//! # Docs.rs Navigation
 //!
-//! Tools can be implemented as:
-//! - **Rust**: Native performance, type safety, full access to Rust ecosystem
-//! - **Python**: Easy prototyping, access to Python libraries
+//! If you are new to the crate, the most useful pages are usually:
 //!
-//! ## Configuration
-//!
-//! Configuration is hierarchical:
-//! 1. Default values (hardcoded)
-//! 2. Global config (`appam.toml`)
-//! 3. Agent config (per-agent TOML file)
-//! 4. Environment variables (highest priority)
-//!
-//! ## Interfaces
-//!
-//! Run agents via:
-//! - **TUI**: Interactive terminal interface with rich widgets
-//! - **CLI**: Simple streaming output
-//! - **Web API**: RESTful API with Server-Sent Events streaming
-//!
-//! # Examples
-//!
-//! ## Creating a Python Tool
-//!
-//! Define the schema (`echo.json`):
-//!
-//! ```json
-//! {
-//!   "type": "function",
-//!   "function": {
-//!     "name": "echo",
-//!     "description": "Echo back the input message",
-//!     "parameters": {
-//!       "type": "object",
-//!       "properties": {
-//!         "message": {
-//!           "type": "string",
-//!           "description": "Message to echo"
-//!         }
-//!       },
-//!       "required": ["message"]
-//!     }
-//!   }
-//! }
-//! ```
-//!
-//! Implement the tool (`echo.py`):
-//!
-//! ```python
-//! def execute(args):
-//!     """Echo the input message."""
-//!     return {"output": args.get("message", "")}
-//! ```
-//!
-//! Register in agent config:
-//!
-//! ```toml
-//! [[tools]]
-//! name = "echo"
-//! schema = "tools/echo.json"
-//! implementation = { type = "python", script = "tools/echo.py" }
-//! ```
-//!
-//! ## Programmatic Agent Creation
-//!
-//! ```no_run
-//! use appam::agent::{Agent, TomlAgent};
-//! use appam::tools::{Tool, ToolRegistry};
-//! use std::sync::Arc;
-//!
-//! async fn create_custom_agent() {
-//!     let agent = TomlAgent::from_file("agent.toml")
-//!         .unwrap()
-//!         .with_model("anthropic/claude-3.5-sonnet");
-//!
-//!     // Run with custom prompt
-//!     agent.run("Analyze this codebase").await.unwrap();
-//! }
-//! ```
+//! - [`prelude`] for the ergonomic import surface
+//! - [`AgentBuilder`] and [`RuntimeAgent`] for programmatic agents
+//! - [`Tool`] and [`AsyncTool`] for tool authoring
+//! - [`tool`] and [`Schema`] for macro-driven tool definitions
+//! - [`StreamBuilder`](crate::agent::streaming_builder::StreamBuilder) for
+//!   closure-based streaming
+//! - [`SessionHistory`] for durable sessions
 
 #![warn(missing_docs)]
 #![warn(clippy::all)]
@@ -246,16 +186,21 @@ pub use tools::{AsyncTool, SessionState, State, Tool, ToolConcurrency, ToolConte
 pub use appam_macros::{tool, Schema};
 pub use async_trait::async_trait;
 
-/// Prelude module for convenient imports.
+/// Convenient import surface for the most common Appam workflows.
 ///
-/// Import everything you need with:
+/// The prelude intentionally favors the Rust-first SDK path: agent builders,
+/// quick constructors, streaming types, tool traits, macro helpers, and the
+/// most common `anyhow`, `serde`, and `tokio` re-exports used by examples.
+///
+/// Import it when you want to prototype quickly or write concise examples:
 ///
 /// ```
 /// use appam::prelude::*;
 /// ```
-/// Prelude module for convenient imports
 ///
-/// Import everything you need with `use appam::prelude::*;`
+/// For library code that exposes Appam types in its own public API, prefer
+/// importing only the specific items you need so your dependency surface stays
+/// explicit.
 ///
 /// # Examples
 ///
@@ -285,9 +230,9 @@ pub use async_trait::async_trait;
 pub mod prelude {
     // Core agent types
     pub use crate::agent::Agent as AgentTrait;
-    pub use crate::agent::{AgentBuilder, RuntimeAgent, Session, TomlAgent}; // The trait
+    pub use crate::agent::{AgentBuilder, RuntimeAgent, Session, TomlAgent};
 
-    // Quick constructors and shortcuts (NEW!)
+    // Quick constructors and shortcuts
     pub use crate::agent::quick::{
         Agent, AgentBuilderAsyncToolExt, AgentBuilderToolExt, AgentQuick,
     };
@@ -301,7 +246,7 @@ pub mod prelude {
         CallbackConsumer, ChannelConsumer, ConsoleConsumer, TraceConsumer,
     };
 
-    // Error types (NEW!)
+    // Error types
     pub use crate::agent::errors::{analyze_tool_error, ToolExecutionError};
 
     // History
@@ -325,7 +270,7 @@ pub mod prelude {
         AsyncTool, SessionState, State, Tool, ToolConcurrency, ToolContext, ToolRegistry,
     };
 
-    // Procedural macros - the star of the DX improvements! (NEW!)
+    // Procedural macros
     pub use appam_macros::{tool, Schema};
 
     // Re-export common external types for convenience

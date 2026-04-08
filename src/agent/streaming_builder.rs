@@ -1,7 +1,9 @@
-//! Closure-based streaming builder for ergonomic event handling
+//! Closure-based streaming helpers for [`RuntimeAgent`].
 //!
-//! This module provides a builder pattern for configuring streaming with closures,
-//! eliminating the need to implement the `StreamConsumer` trait manually.
+//! The types in this module offer the most ergonomic streaming API in the crate:
+//! attach closures for the events you care about, then run the agent. This is
+//! ideal for CLIs, small services, demos, and tests that want streaming without
+//! a bespoke [`StreamConsumer`] type.
 //!
 //! # Examples
 //!
@@ -47,10 +49,15 @@ type DoneHandler = dyn Fn() + Send + Sync;
 type AsyncToolCallHandler = dyn Fn(String, String) -> BoxFuture<'static, Result<()>> + Send + Sync;
 type AsyncToolResultHandler = dyn Fn(String, Value) -> BoxFuture<'static, Result<()>> + Send + Sync;
 
-/// Builder for configuring streaming with closures
+/// Builder for closure-driven handling of streamed agent events.
 ///
-/// This builder provides an ergonomic API for handling streaming events without
-/// the need to implement the `StreamConsumer` trait.
+/// A `StreamBuilder` is created by [`RuntimeAgent::stream`] and consumed by
+/// [`StreamBuilder::run`]. Each registration method stores one closure for one
+/// event category; later registrations replace earlier ones.
+///
+/// Synchronous handlers run inline on the agent's streaming path. Keep them
+/// lightweight so they do not stall provider reads. The `*_async` handlers are
+/// spawned onto Tokio tasks for side work that can happen out of band.
 ///
 /// # Examples
 ///
@@ -100,9 +107,10 @@ pub struct StreamBuilder<'a> {
 }
 
 impl<'a> StreamBuilder<'a> {
-    /// Create a new streaming builder
+    /// Create a new streaming builder for one user message.
     ///
-    /// Typically called via `agent.stream(message)` rather than directly.
+    /// Most callers should use [`RuntimeAgent::stream`] instead of invoking
+    /// this constructor directly.
     pub fn new(agent: &'a RuntimeAgent, message: impl Into<String>) -> Self {
         Self {
             agent,
@@ -120,7 +128,7 @@ impl<'a> StreamBuilder<'a> {
         }
     }
 
-    /// Handle content chunks from the LLM
+    /// Handle text content chunks emitted by the model.
     ///
     /// # Examples
     ///
@@ -149,7 +157,7 @@ impl<'a> StreamBuilder<'a> {
         self
     }
 
-    /// Handle reasoning/thinking tokens from models that support extended thinking
+    /// Handle reasoning or thinking text emitted by models that expose it.
     ///
     /// # Examples
     ///
@@ -177,7 +185,7 @@ impl<'a> StreamBuilder<'a> {
         self
     }
 
-    /// Handle tool call initiation
+    /// Handle finalized tool-call requests.
     ///
     /// Called when the model decides to invoke a tool with complete arguments.
     ///
@@ -208,7 +216,7 @@ impl<'a> StreamBuilder<'a> {
         self
     }
 
-    /// Handle tool execution results
+    /// Handle successful tool execution results.
     ///
     /// Called when a tool completes successfully with its result.
     ///
@@ -238,7 +246,7 @@ impl<'a> StreamBuilder<'a> {
         self
     }
 
-    /// Handle tool execution failures
+    /// Handle tool execution failures.
     ///
     /// Called when a tool raises an error during execution.
     ///
@@ -564,11 +572,12 @@ impl StreamConsumer for ClosureConsumer {
     }
 }
 
-/// Extension trait for RuntimeAgent to add streaming builder
+/// Convenience entry point for closure-based streaming.
 impl RuntimeAgent {
-    /// Create a streaming builder for closure-based event handling
+    /// Create a [`StreamBuilder`] for one user message.
     ///
-    /// This provides an ergonomic alternative to implementing `StreamConsumer` manually.
+    /// Use this when you want inline closures rather than a dedicated
+    /// [`StreamConsumer`] implementation.
     ///
     /// # Examples
     ///

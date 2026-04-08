@@ -1,7 +1,13 @@
-//! Procedural macros for the Appam AI agent framework.
+//! Procedural macros supporting Appam's Rust-first tool authoring workflow.
 //!
-//! This crate provides the `#[tool]` attribute macro for easily defining tools
-//! that can be used by AI agents with support for parameter descriptions and defaults.
+//! The two user-facing surfaces are:
+//!
+//! - [`tool`] for turning ordinary Rust functions into runtime tools
+//! - `Schema` derive for generating JSON Schema from typed inputs
+//!
+//! These macros are designed to keep tool definitions close to normal Rust
+//! code while still producing the provider-facing schema and runtime glue that
+//! Appam needs.
 //!
 //! # Examples
 //!
@@ -52,15 +58,20 @@ impl Parse for ToolAttributes {
     }
 }
 
-/// Attribute macro for defining AI agent tools.
+/// Attribute macro for defining Appam tools from ordinary Rust functions.
 ///
-/// This macro generates a complete `Tool` trait implementation from a function,
-/// automatically creating JSON schemas and handling argument marshaling.
+/// The macro generates the runtime wrapper, JSON-schema metadata, and argument
+/// decoding needed to expose a Rust function as an Appam tool. It supports both
+/// simple user parameters and injected runtime parameters such as
+/// `ToolContext`, `State<T>`, and `SessionState<T>`.
 ///
 /// # Attributes
 ///
 /// - `name`: The tool name (defaults to function name)
 /// - `description`: Human-readable description for the LLM
+///
+/// Per-parameter `#[arg(...)]` attributes may be used for descriptions and
+/// default values.
 ///
 /// # Supported Function Signatures
 ///
@@ -92,6 +103,9 @@ impl Parse for ToolAttributes {
 /// - A constructor function with the original function name
 /// - JSON schema generation based on parameter types
 ///
+/// Async functions or functions that request runtime-injected parameters are
+/// emitted as Appam async/context-aware tools.
+///
 /// # Type Mapping
 ///
 /// Rust types are mapped to JSON schema types:
@@ -100,6 +114,15 @@ impl Parse for ToolAttributes {
 /// - `bool` → `"boolean"`
 /// - `Vec<T>` → `"array"`
 /// - `serde_json::Value` → pass-through
+///
+/// For richer typed inputs, prefer a single input struct plus `#[derive(Schema)]`.
+///
+/// # Security
+///
+/// The generated wrapper only handles decoding and registration. The function
+/// body still receives model-controlled input and must validate filesystem
+/// paths, shell arguments, network targets, and any other security-sensitive
+/// data before acting on it.
 #[proc_macro_attribute]
 pub fn tool(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr_args = parse_macro_input!(attr as ToolAttributes);

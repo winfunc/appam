@@ -1,25 +1,9 @@
-//! LLM provider abstraction layer.
+//! Shared provider selection and runtime client abstractions.
 //!
-//! Defines the common interface for all LLM providers (OpenRouter, Anthropic, etc.)
-//! enabling seamless provider switching with a unified streaming API.
-//!
-//! # Architecture
-//!
-//! - `LlmProvider`: Enum representing available providers
-//! - `LlmClient`: Trait defining the common LLM client interface
-//! - Provider-specific implementations in their respective modules
-//!
-//! # Provider Switching
-//!
-//! Applications can switch providers by changing a single configuration value:
-//!
-//! ```toml
-//! # appam.toml
-//! provider = "anthropic"  # or "openrouter"
-//! ```
-//!
-//! The runtime dynamically creates the appropriate client implementation based
-//! on the configured provider, while maintaining identical API semantics.
+//! The rest of Appam depends on this module instead of depending directly on a
+//! specific provider client. That separation keeps provider quirks, auth, and
+//! stream parsing contained in the provider submodules while the runtime works
+//! in terms of unified messages and tool calls.
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -27,12 +11,18 @@ use serde::{Deserialize, Serialize};
 
 use super::unified::{UnifiedMessage, UnifiedTool, UnifiedToolCall};
 
-/// Sanitized provider-level diagnostics captured for failed requests.
+/// Sanitized provider diagnostics captured for failed requests.
 ///
 /// This payload is intentionally limited to request/response data that helps
 /// operators debug provider failures without storing credentials. Provider
 /// clients only populate this structure for failed requests and clear it after
 /// successful completion.
+///
+/// # Security
+///
+/// The payload is expected to be safe for traces and persisted diagnostics, but
+/// callers should still avoid attaching end-user secrets or unrelated prompt
+/// bodies when forwarding it elsewhere.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderFailureCapture {
     /// Provider label used for the failing request.
@@ -49,7 +39,7 @@ pub struct ProviderFailureCapture {
     pub provider_response_id: Option<String>,
 }
 
-/// LLM provider selection.
+/// Enumerates the LLM backends Appam can target.
 ///
 /// Determines which backend API to use for language model inference.
 /// Each provider has its own configuration section and may support
@@ -63,14 +53,14 @@ pub struct ProviderFailureCapture {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum LlmProvider {
-    /// OpenRouter Chat Completions API (standard, stable)
+    /// OpenRouter Chat Completions API.
     ///
     /// Supports: Tool calling, reasoning tokens, provider routing, automatic caching
     /// Endpoint: `https://openrouter.ai/api/v1/chat/completions`
     #[default]
     OpenRouterCompletions,
 
-    /// OpenRouter Responses API (alpha, advanced features)
+    /// OpenRouter Responses API.
     ///
     /// Supports: Tool calling, enhanced reasoning with effort levels, structured outputs
     /// Endpoint: `https://openrouter.ai/api/v1/responses`
@@ -327,7 +317,7 @@ impl LlmProvider {
     }
 }
 
-/// Common interface for LLM client implementations.
+/// Common streaming interface implemented by provider clients.
 ///
 /// All provider clients (OpenRouter, Anthropic, etc.) implement this trait,
 /// enabling the agent runtime to work with any provider through a unified API.
@@ -421,10 +411,11 @@ pub trait LlmClient: Send + Sync {
     fn provider_name(&self) -> &str;
 }
 
-/// Dynamic LLM client wrapper.
+/// Runtime-selected provider client wrapper.
 ///
-/// Wraps provider-specific clients in an enum for dynamic dispatch.
-/// This enables runtime provider selection while maintaining type safety.
+/// `DynamicLlmClient` keeps provider construction explicit while giving the
+/// runtime a single concrete type it can store, log, and query for failure
+/// diagnostics.
 ///
 /// # Usage
 ///
@@ -439,9 +430,9 @@ pub trait LlmClient: Send + Sync {
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub enum DynamicLlmClient {
-    /// OpenRouter Chat Completions API client (standard)
+    /// OpenRouter Chat Completions API client.
     OpenRouterCompletions(crate::llm::openrouter::completions::OpenRouterCompletionsClient),
-    /// OpenRouter Responses API client (alpha)
+    /// OpenRouter Responses API client.
     OpenRouterResponses(crate::llm::openrouter::responses::OpenRouterClient),
     /// Anthropic Messages API client
     Anthropic(crate::llm::anthropic::AnthropicClient),
@@ -483,7 +474,7 @@ pub enum DynamicLlmClient {
 }
 
 impl DynamicLlmClient {
-    /// Create a client from application configuration.
+    /// Create a provider client from a fully resolved [`crate::config::AppConfig`].
     ///
     /// Selects the appropriate client implementation based on `config.provider`.
     ///
@@ -586,7 +577,7 @@ impl DynamicLlmClient {
         }
     }
 
-    /// Get the active provider.
+    /// Return the currently selected provider descriptor.
     pub fn provider(&self) -> LlmProvider {
         match self {
             Self::OpenRouterCompletions(_) => LlmProvider::OpenRouterCompletions,
@@ -624,7 +615,7 @@ impl DynamicLlmClient {
         }
     }
 
-    /// Get the provider name string.
+    /// Return a stable lowercase provider label for logs and metrics.
     pub fn provider_name(&self) -> &str {
         match self {
             Self::OpenRouterCompletions(_) => "openrouter-completions",
@@ -654,6 +645,8 @@ impl DynamicLlmClient {
     }
 
     /// Update the provider-native continuation anchor when supported.
+    ///
+    /// Providers that do not model response continuation IDs ignore this call.
     pub fn set_previous_response_id(&self, response_id: Option<String>) {
         match self {
             Self::OpenAI(client) => client.set_previous_response_id(response_id),

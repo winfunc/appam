@@ -1,7 +1,14 @@
-//! Tool system for agent capabilities.
+//! Tool traits, managed state, and runtime execution helpers.
 //!
-//! This module provides the core `Tool` trait and supporting infrastructure for
-//! loading, registering, and executing tools from both Rust and Python implementations.
+//! Tools are the boundary where model output becomes real side effects. The
+//! types in this module therefore focus on three concerns:
+//!
+//! - describing tools to providers through JSON-schema-backed specs
+//! - executing tools safely and predictably at runtime
+//! - exposing managed app/session state through fail-closed handles
+//!
+//! Appam keeps the original synchronous [`Tool`] trait for simple stateless
+//! tools and adds [`AsyncTool`] for context-aware or stateful implementations.
 
 pub mod builtin;
 pub mod loader;
@@ -19,11 +26,17 @@ use serde_json::Value;
 
 use crate::llm::ToolSpec;
 
-/// Core trait for tools that can be invoked by agents.
+/// Synchronous tool interface for simple Rust tool implementations.
 ///
-/// Tools are executable functions exposed to the LLM via JSON schemas. Each
-/// tool has a unique name, provides a specification for the LLM, and implements
-/// execution logic.
+/// A `Tool` is intentionally small:
+///
+/// - [`Tool::name`] provides the stable dispatch key
+/// - [`Tool::spec`] provides the provider-facing schema and description
+/// - [`Tool::execute`] performs the actual side effect
+///
+/// The runtime treats tool arguments as untrusted model output. Implementations
+/// should validate inputs, reject ambiguous requests, and avoid logging secrets
+/// or other sensitive data derived from user prompts or credentials.
 ///
 /// # Examples
 ///
@@ -73,7 +86,7 @@ pub trait Tool: Send + Sync {
     /// for routing LLM tool calls to the correct implementation.
     fn name(&self) -> &str;
 
-    /// Return the tool specification for the LLM.
+    /// Return the tool specification exposed to the model.
     ///
     /// The specification includes the function signature, parameter schema,
     /// and description. This is typically loaded from a JSON file to maintain
@@ -84,7 +97,7 @@ pub trait Tool: Send + Sync {
     /// Returns an error if the specification cannot be loaded or parsed.
     fn spec(&self) -> Result<ToolSpec>;
 
-    /// Execute the tool with the given arguments.
+    /// Execute the tool with the given JSON arguments.
     ///
     /// Arguments are provided as a JSON value matching the schema from `spec()`.
     /// The tool should validate inputs, perform its operation, and return a
@@ -123,7 +136,7 @@ pub enum ToolConcurrency {
     ParallelSafe,
 }
 
-/// Runtime metadata attached to a single tool invocation.
+/// Runtime metadata attached to one tool invocation.
 ///
 /// `ToolContext` is created by the Appam runtime for every tool call. It gives
 /// tools stable identifiers for the current session, agent, and tool call while
@@ -145,7 +158,7 @@ pub struct ToolContext {
 }
 
 impl ToolContext {
-    /// Create a standalone tool context without managed-state access.
+    /// Create a standalone context without managed-state access.
     ///
     /// This constructor is primarily useful for tests that only need stable
     /// metadata and do not intend to access Appam-managed app/session state.
@@ -243,7 +256,7 @@ impl std::fmt::Debug for ToolContext {
     }
 }
 
-/// App-scoped managed state handle.
+/// Shared handle to app-scoped managed state.
 ///
 /// App-managed state is registered once per registry using
 /// `ToolRegistry::manage(...)` and shared across all tool calls handled by that
@@ -261,6 +274,9 @@ impl<T> State<T> {
     }
 
     /// Return the shared `Arc<T>` backing this state handle.
+    ///
+    /// This is useful when the downstream API expects ownership of an `Arc`
+    /// rather than a dereferenceable wrapper.
     pub fn into_inner(self) -> Arc<T> {
         self.inner
     }
@@ -283,7 +299,7 @@ where
     }
 }
 
-/// Session-scoped managed state handle.
+/// Shared handle to lazily initialized session-scoped state.
 ///
 /// Session-managed state is owned by the registry and keyed by `(session_id,
 /// type)`. The wrapped payload stays in memory until the registry or session
@@ -333,6 +349,9 @@ impl<T> SessionState<T> {
     }
 
     /// Clone the full session payload when `T: Clone`.
+    ///
+    /// This is convenient for snapshot-style reads when calling code needs an
+    /// owned value outside the lock scope.
     pub fn get_cloned(&self) -> Result<T>
     where
         T: Clone,
@@ -353,7 +372,7 @@ where
     }
 }
 
-/// Async/context-aware tool implementation for Rust tools.
+/// Async, context-aware tool interface for advanced Rust tools.
 ///
 /// This trait extends Appam's original synchronous `Tool` interface with
 /// runtime metadata and managed-state access while remaining additive and
@@ -370,15 +389,21 @@ pub trait AsyncTool: Send + Sync {
     /// Return the unique, stable function name for this tool.
     fn name(&self) -> &str;
 
-    /// Return the tool specification for the LLM.
+    /// Return the tool specification exposed to the model.
     fn spec(&self) -> Result<ToolSpec>;
 
     /// Return the concurrency policy for this tool.
+    ///
+    /// Implementations should keep the default unless concurrent execution is
+    /// demonstrably safe with respect to shared state and external side effects.
     fn concurrency(&self) -> ToolConcurrency {
         ToolConcurrency::SerialOnly
     }
 
     /// Execute the tool with runtime metadata and JSON arguments.
+    ///
+    /// The provided [`ToolContext`] contains stable identifiers for the current
+    /// session and tool call plus managed state lookup helpers.
     ///
     /// # Errors
     ///

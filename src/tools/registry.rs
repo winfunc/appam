@@ -1,8 +1,13 @@
-//! Dynamic tool registry for runtime tool management.
+//! Runtime registry for tool lookup, execution, and managed state.
 //!
-//! This registry keeps Appam's original synchronous tool path intact while also
-//! hosting the new async/context-aware tool surface. It additionally owns the
-//! managed app/session state store used by `ToolContext`.
+//! [`ToolRegistry`] is the bridge between provider-emitted tool names and real
+//! Rust implementations. It stores both legacy synchronous tools and modern
+//! async/context-aware tools in one place, then exposes a narrow execution API
+//! that the runtime can call safely.
+//!
+//! The registry also owns managed state registration for [`super::State`] and
+//! [`super::SessionState`], allowing tool implementations to share app-wide or
+//! per-session data without inventing a second state container.
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
@@ -189,10 +194,14 @@ impl RegistryStateStore {
     }
 }
 
-/// Thread-safe registry for sync and async tool implementations.
+/// Thread-safe registry for tool implementations and managed state.
 ///
-/// The registry maps tool names to executable implementations and owns the
-/// managed app/session state used by context-aware tools.
+/// A registry is typically owned by one agent instance. The runtime uses it to
+/// resolve tool schemas, execute tool calls, and lazily materialize app/session
+/// state for context-aware tools.
+///
+/// Registering a tool under an existing name replaces the previous entry. This
+/// is intentional so builders and tests can override tools deterministically.
 #[derive(Clone)]
 pub struct ToolRegistry {
     tools: Arc<RwLock<HashMap<String, RegisteredTool>>>,
@@ -214,7 +223,7 @@ impl Default for ToolRegistry {
 }
 
 impl ToolRegistry {
-    /// Create a new empty tool registry.
+    /// Create a new empty registry with no pre-registered tools or state.
     pub fn new() -> Self {
         Self {
             tools: Arc::new(RwLock::new(HashMap::new())),
@@ -222,14 +231,18 @@ impl ToolRegistry {
         }
     }
 
-    /// Register a synchronous legacy tool in the registry.
+    /// Register a synchronous tool implementation.
+    ///
+    /// If another tool with the same name already exists, it is replaced.
     pub fn register(&self, tool: Arc<dyn Tool>) {
         let name = tool.name().to_string();
         let mut tools = self.tools.write().unwrap();
         tools.insert(name, RegisteredTool::Legacy(tool));
     }
 
-    /// Register an async/context-aware tool in the registry.
+    /// Register an async/context-aware tool implementation.
+    ///
+    /// If another tool with the same name already exists, it is replaced.
     pub fn register_async(&self, tool: Arc<dyn AsyncTool>) {
         let name = tool.name().to_string();
         let mut tools = self.tools.write().unwrap();
@@ -254,7 +267,7 @@ impl ToolRegistry {
         }
     }
 
-    /// List all registered tool names.
+    /// Return all registered tool names in sorted order.
     pub fn list(&self) -> Vec<String> {
         let tools = self.tools.read().unwrap();
         let mut names: Vec<String> = tools.keys().cloned().collect();
@@ -262,7 +275,9 @@ impl ToolRegistry {
         names
     }
 
-    /// Return the full list of tool specifications.
+    /// Return every registered tool specification in sorted name order.
+    ///
+    /// This is the list typically forwarded to provider clients for one run.
     pub fn specs(&self) -> Result<Vec<crate::llm::ToolSpec>> {
         let tools = self.tools.read().unwrap();
         let mut names: Vec<&String> = tools.keys().collect();
@@ -277,18 +292,18 @@ impl ToolRegistry {
         Ok(specs)
     }
 
-    /// Get the number of registered tools.
+    /// Return the number of registered tools.
     pub fn len(&self) -> usize {
         let tools = self.tools.read().unwrap();
         tools.len()
     }
 
-    /// Check if the registry is empty.
+    /// Return `true` when no tools are currently registered.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    /// Return the concurrency policy for a tool.
+    /// Return the declared concurrency policy for a named tool.
     pub fn concurrency(&self, name: &str) -> Option<ToolConcurrency> {
         let tools = self.tools.read().unwrap();
         tools.get(name).map(RegisteredTool::concurrency)
@@ -303,13 +318,19 @@ impl ToolRegistry {
         tools.remove(name).and_then(|tool| tool.as_legacy())
     }
 
-    /// Clear all tools from the registry.
+    /// Remove every registered tool from the registry.
+    ///
+    /// Managed app/session state registrations are left intact.
     pub fn clear(&self) {
         let mut tools = self.tools.write().unwrap();
         tools.clear();
     }
 
-    /// Create a registry pre-populated with built-in tools.
+    /// Create a registry intended for built-in tools.
+    ///
+    /// Appam currently ships this as an empty registry because the historical
+    /// built-in tool surface is disabled. The method remains so callers can use
+    /// a stable constructor if that surface returns in the future.
     pub fn with_builtins() -> Self {
         Self::new()
     }
@@ -343,6 +364,9 @@ impl ToolRegistry {
     }
 
     /// Execute any registered tool with runtime metadata.
+    ///
+    /// This is the preferred execution entry point for the runtime because it
+    /// supports both legacy tools and context-aware async tools.
     pub async fn execute_with_context(
         &self,
         ctx: ToolContext,
@@ -359,7 +383,9 @@ impl ToolRegistry {
             .await
     }
 
-    /// Register an app-scoped managed state value.
+    /// Register an app-scoped managed state value by concrete type.
+    ///
+    /// Later calls with the same concrete type replace the previous value.
     pub fn manage<T>(&self, state: T)
     where
         T: Send + Sync + 'static,
@@ -368,6 +394,8 @@ impl ToolRegistry {
     }
 
     /// Register a lazily initialized session-scoped state type.
+    ///
+    /// The initializer runs on first access for each distinct session ID.
     pub fn session_state_with<T, F>(&self, init: F)
     where
         T: Send + Sync + 'static,
@@ -377,11 +405,14 @@ impl ToolRegistry {
     }
 
     /// Clear all managed state for one session.
+    ///
+    /// Subsequent access to session state for that session will re-run the
+    /// registered initializer.
     pub fn clear_session_state(&self, session_id: &str) {
         self.state_store.clear_session_state(session_id);
     }
 
-    /// Clear every managed session-state entry.
+    /// Clear every managed session-state entry across all sessions.
     pub fn clear_all_session_state(&self) {
         self.state_store.clear_all_session_state();
     }

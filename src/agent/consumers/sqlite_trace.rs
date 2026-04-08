@@ -155,7 +155,7 @@ impl SqliteTraceConsumer {
     ///
     /// The original implementation only logged the outer `anyhow` context, which
     /// hid the underlying SQLite failure and made repeated warnings difficult to
-    /// diagnose from the TUI. Logging the full error chain plus session metadata
+    /// diagnose from logs alone. Logging the full error chain plus session metadata
     /// keeps the failure actionable without surfacing request payloads or other
     /// sensitive content.
     fn warn_trace_persistence_failure(&self, operation: &'static str, error: &Error) {

@@ -1,6 +1,6 @@
 //! OpenRouter Chat Completions API client with streaming support.
 //!
-//! Provides a client for the OpenRouter Chat Completions API (standard, stable)
+//! Provides a client for the OpenRouter Chat Completions API
 //! that supports streaming Server-Sent Events (SSE) responses with tool calling,
 //! reasoning tokens, and provider routing.
 //!

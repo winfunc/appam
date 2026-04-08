@@ -1,7 +1,9 @@
-//! TOML-based agent implementation.
+//! Agent implementation backed by on-disk TOML configuration.
 //!
-//! Provides an agent that loads its configuration, system prompt, and tools
-//! from a TOML file, enabling zero-code agent creation.
+//! [`TomlAgent`] bridges the declarative configuration format to the same
+//! runtime used by programmatically built agents. It loads prompt text, tool
+//! schemas, and tool implementations from disk, then exposes the normal
+//! [`super::Agent`] trait surface.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -16,11 +18,11 @@ use crate::tools::{
     loader::load_tools, registry::ToolRegistry, AsyncTool, ToolConcurrency, ToolContext,
 };
 
-/// Agent loaded from a TOML configuration file.
+/// Agent loaded from a TOML configuration file plus adjacent assets.
 ///
-/// This agent dynamically loads its system prompt, model settings, and tool
-/// definitions from a TOML file, making it easy to create new agents without
-/// writing code.
+/// This is Appam's declarative agent path. It is useful when prompts, tool
+/// schemas, and Python tools are part of the repository rather than embedded in
+/// Rust source.
 ///
 /// # Configuration
 ///
@@ -124,9 +126,10 @@ impl TomlAgent {
         })
     }
 
-    /// Create an agent with a model override.
+    /// Return a copy of this agent with a runtime model override applied.
     ///
-    /// This allows runtime model selection that overrides the configuration.
+    /// The underlying TOML file is unchanged; only this in-memory instance sees
+    /// the override.
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
         self.model_override = Some(model.into());
         self
@@ -150,12 +153,12 @@ impl TomlAgent {
         &self.base_dir
     }
 
-    /// Get the tool registry for this agent.
+    /// Return a clone of the loaded tool registry.
     pub fn registry(&self) -> Arc<ToolRegistry> {
         Arc::clone(&self.registry)
     }
 
-    /// Get the agent configuration.
+    /// Borrow the parsed agent configuration.
     pub fn config(&self) -> &AgentConfig {
         &self.config
     }

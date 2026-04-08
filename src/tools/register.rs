@@ -1,7 +1,9 @@
-//! Tool registration helpers for simplified tool creation.
+//! Helpers for small inline tools and ergonomic registry registration.
 //!
-//! Provides convenience functions for registering tools without full trait
-//! implementations, including closure-based tools.
+//! These helpers are intentionally lightweight. Reach for them when a full
+//! `struct` plus `impl Tool` would be unnecessary ceremony, but still keep in
+//! mind that closure-based tools receive untrusted model arguments and should
+//! validate inputs just as carefully as any other tool implementation.
 
 use std::sync::Arc;
 
@@ -11,9 +13,11 @@ use serde_json::Value;
 use super::{Tool, ToolRegistry};
 use crate::llm::ToolSpec;
 
-/// A tool created from a closure or function.
+/// Tool implementation backed by an inline closure.
 ///
-/// This allows quick tool creation without implementing the full Tool trait.
+/// `ClosureTool` is best suited to tests, examples, and tiny glue-code tools.
+/// For larger tools, a named type or the [`crate::tool`] macro usually produces
+/// clearer documentation and easier reuse.
 pub struct ClosureTool {
     name: String,
     spec: ToolSpec,
@@ -21,13 +25,10 @@ pub struct ClosureTool {
 }
 
 impl ClosureTool {
-    /// Create a new closure-based tool.
+    /// Create a new closure-backed tool.
     ///
-    /// # Parameters
-    ///
-    /// - `name`: Tool name
-    /// - `spec`: Tool specification (JSON schema)
-    /// - `execute_fn`: Function that executes the tool
+    /// The caller is responsible for keeping `name` and `spec` consistent.
+    /// Appam does not rewrite mismatched schemas here.
     ///
     /// # Examples
     ///
@@ -80,12 +81,12 @@ impl Tool for ClosureTool {
     }
 }
 
-/// Extension trait for ToolRegistry to register closure-based tools.
+/// Extension trait adding closure registration helpers to [`ToolRegistry`].
 pub trait ToolRegistryExt {
     /// Register a tool using a closure.
     ///
     /// This is a convenience method for quickly adding simple tools without
-    /// implementing the full Tool trait.
+    /// implementing a dedicated tool type.
     ///
     /// # Examples
     ///

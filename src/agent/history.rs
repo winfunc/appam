@@ -1,8 +1,9 @@
-//! Session history management with SQLite persistence.
+//! Durable session persistence backed by SQLite.
 //!
-//! Provides session storage and retrieval for conversation continuation across
-//! agent runs. This module is separate from the web-specific session store and
-//! designed for use in any context (CLI, SDK, web, etc.).
+//! [`SessionHistory`] stores completed or in-progress sessions so callers can
+//! resume conversations, inspect prior runs, or build operational tooling on
+//! top of Appam's session data. The API is runtime agnostic and works equally
+//! well from CLIs, libraries, and services.
 
 use std::path::Path;
 
@@ -43,10 +44,12 @@ pub struct SessionSummary {
     pub ended_at: Option<DateTime<Utc>>,
 }
 
-/// Session history manager with SQLite persistence.
+/// SQLite-backed history manager for agent sessions.
 ///
-/// Manages agent session storage and retrieval for conversation continuation.
-/// When history is disabled, operations are no-ops and return empty results.
+/// When history is disabled in [`HistoryConfig`], the public API remains usable
+/// but degrades to a no-op surface that returns empty results. This lets higher
+/// level code keep a single control flow regardless of whether persistence is
+/// enabled.
 ///
 /// # Examples
 ///

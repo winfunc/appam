@@ -1,7 +1,11 @@
-//! Agent builder for fluent programmatic agent creation.
+//! Fluent programmatic agent construction.
 //!
-//! Provides a builder pattern for constructing agents entirely in Rust code
-//! with excellent ergonomics and compile-time validation.
+//! [`AgentBuilder`] is the main Rust-first entry point when you need more
+//! control than [`crate::agent::quick`] but do not want to implement the
+//! [`crate::agent::Agent`] trait yourself. It collects provider overrides,
+//! tool registrations, logging/history settings, and continuation policy, then
+//! materializes a [`RuntimeAgent`] after validating the final configuration at
+//! build time.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -42,10 +46,18 @@ pub enum ReasoningProvider {
     OpenRouter(crate::llm::openrouter::config::ReasoningConfig),
 }
 
-/// Fluent builder for creating agents programmatically.
+/// Fluent builder for constructing [`RuntimeAgent`] instances.
 ///
-/// Provides a chainable API for constructing agents with type-safe configuration,
-/// tool registration, and system prompt management.
+/// The builder keeps configuration explicit and local to the calling site while
+/// reusing the same runtime, tool registry, and provider abstraction used by
+/// TOML-loaded agents.
+///
+/// Prefer this type when you need:
+///
+/// - provider-specific tuning such as reasoning, caching, or service tiers
+/// - managed tool registration without writing TOML
+/// - history, tracing, or continuation overrides bound to one agent instance
+/// - deterministic construction that validates inputs before the first request
 ///
 /// # Examples
 ///
@@ -55,7 +67,7 @@ pub enum ReasoningProvider {
 ///
 /// # fn main() -> Result<()> {
 /// let agent = AgentBuilder::new("my-agent")
-///     .model("anthropic/claude-3.5-sonnet")
+///     .model("anthropic/claude-sonnet-4-5")
 ///     .system_prompt("You are a helpful AI assistant.")
 ///     .build()?;
 /// # Ok(())
@@ -151,9 +163,10 @@ pub struct AgentBuilder {
 }
 
 impl AgentBuilder {
-    /// Create a new agent builder with the given name.
+    /// Create a new builder for the supplied agent name.
     ///
-    /// The name should be a unique identifier for the agent.
+    /// The name is used for session metadata, trace output, and managed-state
+    /// routing. It should therefore be stable and human meaningful.
     ///
     /// # Examples
     ///
@@ -213,7 +226,11 @@ impl AgentBuilder {
         }
     }
 
-    /// Set the LLM provider to use.
+    /// Override provider inference with an explicit [`crate::llm::LlmProvider`].
+    ///
+    /// This is most useful when your model string is ambiguous, when you want
+    /// to route the same model family through a different backend, or when the
+    /// provider carries extra metadata such as Azure or Bedrock settings.
     ///
     /// # Examples
     ///
@@ -229,14 +246,18 @@ impl AgentBuilder {
         self
     }
 
-    /// Set the LLM model to use.
+    /// Set the model identifier sent to the selected provider.
+    ///
+    /// Appam accepts provider-prefixed shared model strings such as
+    /// `"openai/gpt-5.4"` as well as provider-native identifiers when the
+    /// selected provider expects them.
     ///
     /// # Examples
     ///
     /// ```ignore
     /// # use appam::agent::AgentBuilder;
     /// let builder = AgentBuilder::new("agent")
-    ///     .model("anthropic/claude-3.5-sonnet");
+    ///     .model("anthropic/claude-sonnet-4-5");
     /// ```
     pub fn model(mut self, model: impl Into<String>) -> Self {
         self.model = Some(model.into());

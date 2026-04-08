@@ -1,7 +1,8 @@
-//! Configuration builders for programmatic config creation.
+//! Fluent builders for global and TOML-style configuration objects.
 //!
-//! Provides fluent builder APIs for creating application and agent configurations
-//! in Rust code without TOML files.
+//! These builders are primarily convenience layers around the public config
+//! structs. They are useful when a caller wants TOML-shaped configuration data
+//! from Rust code without hand-constructing every nested struct.
 
 use std::path::PathBuf;
 
@@ -12,9 +13,12 @@ use crate::agent::config::{AgentConfig, AgentMetadata};
 use crate::llm::openrouter::OpenRouterConfig;
 use crate::tools::loader::{ToolConfig, ToolImplementation};
 
-/// Builder for global application configuration.
+/// Fluent builder for [`AppConfig`].
 ///
-/// Provides a fluent API for constructing `AppConfig` programmatically.
+/// This builder targets the OpenRouter-first global config shape because that
+/// is the historical default configuration surface. Provider-specific runtime
+/// overrides are still better expressed through [`crate::agent::AgentBuilder`]
+/// when constructing a concrete agent instance.
 ///
 /// # Examples
 ///

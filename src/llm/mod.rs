@@ -1,21 +1,15 @@
-//! LLM client types and abstractions for multiple providers.
+//! Provider-neutral LLM types plus provider-specific client modules.
 //!
-//! This module provides a unified interface for different LLM providers:
-//! - **OpenRouter**: Responses API with reasoning and tool calling
-//! - **Anthropic**: Messages API with extended thinking and prompt caching
-//! - **OpenAI**: Responses API with reasoning, structured outputs, and service tiers
-//! - **OpenAI Codex**: ChatGPT subscription-backed Codex Responses API
-//! - **Vertex**: Gemini generateContent API with streaming and function calling
+//! Appam's runtime speaks in unified messages, tools, and usage records. The
+//! provider modules under this namespace handle translation to and from each
+//! upstream API so the agent runtime does not need to special-case wire formats.
 //!
-//! # Provider Abstraction
+//! The most important split is:
 //!
-//! The `LlmClient` trait defines a common interface that all providers implement,
-//! enabling seamless switching between providers with identical semantics.
-//!
-//! # Unified Format
-//!
-//! Internal types (`UnifiedMessage`, `UnifiedTool`, etc.) abstract over provider
-//! differences. The agent runtime operates solely on these unified types.
+//! - [`provider`] for runtime-facing client traits and dynamic dispatch
+//! - [`unified`] for provider-agnostic message and tool types
+//! - provider submodules such as [`anthropic`], [`openai`], [`openrouter`],
+//!   [`openai_codex`], and [`vertex`] for transport-specific details
 
 pub mod anthropic;
 pub mod openai;

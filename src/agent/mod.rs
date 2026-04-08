@@ -1,8 +1,16 @@
-//! Agent system and runtime.
+//! Core agent abstractions, runtime entry points, and session metadata.
 //!
-//! Defines the core `Agent` trait and provides implementations for loading agents
-//! from TOML configurations, orchestrating tool-calling conversations, and managing
-//! session state.
+//! This module defines the public agent contract used by the rest of the crate.
+//! Most applications interact with Appam through one of three agent forms:
+//!
+//! - [`RuntimeAgent`] for programmatic Rust construction
+//! - [`TomlAgent`] for loading agents from on-disk configuration
+//! - [`AgentBuilder`] for fluent assembly of a runtime-backed agent
+//!
+//! The shared [`Agent`] trait keeps the runtime provider agnostic. Implementors
+//! supply prompts, tool schemas, tool execution, and optional continuation
+//! policy while the runtime module handles streaming, multi-turn tool loops,
+//! persistence, and trace capture.
 
 pub mod builder;
 pub mod config;
@@ -22,12 +30,19 @@ use async_trait::async_trait;
 use crate::llm::{ChatMessage, Role, ToolSpec};
 use crate::tools::{ToolConcurrency, ToolContext};
 
-/// Core trait for AI agents.
+/// Common interface implemented by all Appam agent types.
 ///
-/// An agent defines:
-/// - A system prompt that establishes behavior and capabilities
-/// - A set of available tools that the LLM can invoke
-/// - A runtime that orchestrates the conversation loop
+/// An `Agent` supplies the pieces the runtime cannot infer on its own:
+///
+/// - a stable name for logging, history, and trace output
+/// - a system prompt or prompt-loading strategy
+/// - a set of tool schemas exposed to the model
+/// - tool execution for provider-emitted tool calls
+/// - optional continuation policy when a session ends prematurely
+///
+/// The runtime intentionally assumes tool arguments are untrusted model output.
+/// Implementations should therefore validate inputs, fail closed on missing
+/// state, and avoid side effects that depend on undocumented provider behavior.
 ///
 /// # Examples
 ///
@@ -73,8 +88,13 @@ pub trait Agent: Send + Sync {
 
     /// Apply agent-specific configuration overrides to global config.
     ///
-    /// Allows agents to override global settings (provider, model, Anthropic features, etc.)
-    /// Default implementation does nothing.
+    /// This hook exists so agent implementations can inject configuration that
+    /// was determined at construction time, such as provider selection, model
+    /// overrides, retry settings, or history/tracing preferences.
+    ///
+    /// The runtime applies this after loading global configuration and before
+    /// constructing the provider client, so implementations should treat it as
+    /// the last agent-controlled layer in the configuration precedence chain.
     fn apply_config_overrides(&self, _cfg: &mut crate::config::AppConfig) {
         // Default: no overrides
     }
@@ -82,16 +102,21 @@ pub trait Agent: Send + Sync {
     /// Return the list of tools required for session completion.
     ///
     /// If `Some`, the runtime will automatically inject a continuation message
-    /// when the session ends without calling any of these tools.
-    /// Default implementation returns `None` (no continuation).
+    /// when the session ends without calling any of these tools. This is useful
+    /// for agents whose contract requires a concrete side effect before the run
+    /// may be considered complete.
+    ///
+    /// Default implementation returns `None`, meaning the runtime accepts the
+    /// model's first completed answer without any additional tool requirements.
     fn required_completion_tools(&self) -> Option<&Vec<String>> {
         None
     }
 
     /// Return the maximum number of continuation attempts.
     ///
-    /// Limits how many times the runtime will inject continuation messages
-    /// before giving up. Default is 2.
+    /// This bounds the runtime's recovery behavior when the model stops before
+    /// calling required completion tools. A low number avoids infinite loops
+    /// while still giving the model a chance to recover from an early stop.
     fn max_continuations(&self) -> usize {
         2
     }
@@ -99,8 +124,8 @@ pub trait Agent: Send + Sync {
     /// Return the custom continuation message, if any.
     ///
     /// If `Some`, this message will be injected when the session ends without
-    /// calling required tools. If `None`, a default message is used.
-    /// Default implementation returns `None`.
+    /// calling required tools. Use this to explain the missing side effect in
+    /// domain terms rather than relying on the runtime's generic fallback.
     fn continuation_message(&self) -> Option<&str> {
         None
     }
@@ -129,7 +154,9 @@ pub trait Agent: Send + Sync {
     /// Resolve a tool by name and execute it.
     ///
     /// Default implementation returns an error. Agents should override this
-    /// to provide tool resolution logic.
+    /// to provide tool resolution logic. New integrations should prefer
+    /// [`Agent::execute_tool_with_context`] so tools receive runtime metadata
+    /// and fail-closed access to managed state.
     fn execute_tool(&self, name: &str, _args: serde_json::Value) -> Result<serde_json::Value> {
         Err(anyhow::anyhow!("Tool not found: {}", name))
     }
@@ -154,7 +181,9 @@ pub trait Agent: Send + Sync {
     ///
     /// Legacy agents default every tool to serial execution. Registry-backed
     /// agents should override this to surface per-tool policies from the
-    /// underlying tool registry.
+    /// underlying tool registry. Declaring a tool parallel-safe only affects
+    /// runtime scheduling; tool implementations remain responsible for their
+    /// own synchronization and external side-effect safety.
     fn tool_concurrency(&self, _name: &str) -> ToolConcurrency {
         ToolConcurrency::SerialOnly
     }
@@ -163,12 +192,17 @@ pub trait Agent: Send + Sync {
     ///
     /// This only affects provider request wiring. Runtime execution still
     /// additionally requires `max_concurrent_tool_executions() > 1` and that
-    /// every returned tool in the batch be marked `ParallelSafe`.
+    /// every returned tool in the batch be marked `ParallelSafe`. The default
+    /// stays `false` because some providers emit subtly different tool-call
+    /// semantics when batching is enabled.
     fn provider_parallel_tool_calls(&self) -> bool {
         false
     }
 
     /// Maximum number of concurrent tool executions allowed for one batch.
+    ///
+    /// The runtime clamps execution to this limit after the provider has
+    /// already decided which tool calls belong in a batch.
     fn max_concurrent_tool_executions(&self) -> usize {
         1
     }

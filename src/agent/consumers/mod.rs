@@ -1,9 +1,11 @@
-//! Built-in stream consumers for common use cases.
+//! Built-in [`StreamConsumer`](crate::agent::streaming::StreamConsumer) implementations.
 //!
-//! Provides ready-to-use implementations of the `StreamConsumer` trait:
-//! - `ConsoleConsumer`: Pretty-printed console output
-//! - `ChannelConsumer`: Forward events to an mpsc channel
-//! - `CallbackConsumer`: Execute a closure for each event
+//! These consumers cover the most common sinks used by Appam applications:
+//!
+//! - [`ConsoleConsumer`] for human-readable terminal output
+//! - [`ChannelConsumer`] for async handoff into other tasks
+//! - [`CallbackConsumer`] for inline integration code
+//! - [`TraceConsumer`] and [`SqliteTraceConsumer`] for persisted trace capture
 //!
 //! # Examples
 //!
