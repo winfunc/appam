@@ -1,0 +1,98 @@
+---
+title: FAQ
+description: Common questions about Appam, including how it compares with Rig, how configuration works, and when to use sessions, traces, and Python tools.
+---
+
+This page answers the questions that usually come up once you move past a single prompt and start building real agents with Appam.
+
+## How does Appam differ with Rig?
+
+Appam and Rig are both Rust libraries for LLM-powered systems, but they optimize for different workloads.
+
+- **Rig** is the broader SDK. It has a larger provider surface, first-class embeddings and vector stores, more multimodal capabilities, and a larger companion-crate ecosystem.
+- **Appam** is more opinionated about the runtime loop. It focuses on long-horizon, tool-using agents with streaming, continuation handling, durable session history, JSONL traces, and provider portability behind one orchestration surface.
+- If your workload is mostly "connect to models, embeddings, and retrieval systems from Rust," Rig is usually the broader fit.
+- If your workload is "run inspectable agents over many turns, resume them later, and understand exactly what happened," Appam is usually the better fit.
+
+In practice, Appam spends more of its design budget on agent operations, while Rig spends more of its design budget on general Rust GenAI application building.
+
+## Which construction style should I use?
+
+Use the smallest surface that still matches the job:
+
+- [`Agent::quick()`](/docs/getting-started/quickstart) for scripts, smoke tests, and fast prototypes.
+- [`Agent::new(name, model)`](/docs/core-concepts/agents) when you want builder ergonomics with provider auto-detection from the model string.
+- [`AgentBuilder`](/docs/core-concepts/agents) when you need explicit runtime control such as retries, thinking, caching, rate limiting, traces, history, or Azure and Bedrock configuration.
+- [`TomlAgent::from_file(...)`](/docs/guides/toml-configuration) when prompts and tool declarations should live on disk instead of in Rust source.
+
+If you are unsure, start with `Agent::new(...)` and move to `AgentBuilder` once you need operational controls.
+
+## Does Appam automatically load `appam.toml`?
+
+No. The default runtime path starts from environment-backed config and then applies agent-level overrides.
+
+If you want to use a global `appam.toml`, load it explicitly with [`load_global_config(...)`](/docs/core-concepts/configuration). If you want file-backed agent definitions, use [`TomlAgent::from_file(...)`](/docs/guides/toml-configuration).
+
+That distinction matters:
+
+- `appam.toml` is for global application config that your code chooses to load.
+- agent TOML files are for `TomlAgent` definitions.
+
+## When should I enable session history?
+
+Enable session history when the conversation needs to survive the current process.
+
+Typical cases:
+
+- you want to resume a session later with `continue_session(...)`
+- you need to inspect prior runs after a restart
+- you want listing, retention, or operational tooling over stored sessions
+
+If every run is disposable and you do not need to continue or inspect it later, you can leave history off. See [Session Persistence](/docs/guides/session-persistence) and [Sessions](/docs/core-concepts/sessions).
+
+## What is the difference between logs and traces?
+
+They are related, but they are not the same thing.
+
+- **Logs** are Appam's own runtime logging output. They tell you what the framework was doing.
+- **Traces** are per-session artifacts. They capture structured agent events such as streamed content, reasoning, tool calls, tool results, and completion state.
+
+If you need to debug the framework or infrastructure behavior, look at logs. If you need to understand one specific agent run, look at traces. Appam keeps those concerns separate on purpose.
+
+## Can Appam resume a session after restart?
+
+Yes, if history is enabled and the session was saved.
+
+The standard pattern is:
+
+1. enable session history
+2. run the first session
+3. call `continue_session(...)` later with the saved session ID
+
+That is one of Appam's core strengths for long-running or interruptible workflows. See [Session Persistence](/docs/guides/session-persistence).
+
+## Should I write tools in Rust or Python?
+
+Prefer Rust unless you have a clear reason not to.
+
+Rust tools integrate best with:
+
+- typed schemas
+- managed app and session state
+- compile-time checks
+- the main Appam runtime model
+
+Python tools are useful when you already have trusted scripts on disk or want TOML-defined tools without rebuilding the binary. They are still powerful, but they run with the same process privileges, so only load Python tools you trust.
+
+## Do I need to use provider clients directly?
+
+Usually no.
+
+Most Appam applications should build an agent and let the runtime own provider selection, streaming, tool execution, and continuation mechanics. The common entry points are:
+
+- `Agent::quick(...)`
+- `Agent::new(...)`
+- `AgentBuilder`
+- `TomlAgent::from_file(...)`
+
+Provider-specific modules matter when you need provider-specific tuning, auth behavior, or configuration details, not for the normal happy path.

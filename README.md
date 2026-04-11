@@ -382,6 +382,7 @@ That lets you keep the orchestration layer inside Rust instead of scattering run
 - [Core concepts: streaming](docs/content/docs/core-concepts/streaming.mdx)
 - [Core concepts: sessions](docs/content/docs/core-concepts/sessions.mdx)
 - [Core concepts: providers](docs/content/docs/core-concepts/providers.mdx)
+- [FAQ](docs/content/docs/faq.mdx)
 
 ### Working examples
 
@@ -398,6 +399,10 @@ That lets you keep the orchestration layer inside Rust instead of scattering run
 ### API docs
 
 - [docs.rs/appam](https://docs.rs/appam)
+
+### FAQ
+
+- [How does Appam differ with Rig? and other common questions](docs/content/docs/faq.mdx)
 
 ## Development
 
