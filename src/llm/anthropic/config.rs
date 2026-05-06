@@ -218,7 +218,7 @@ pub struct AnthropicConfig {
     /// such as:
     ///
     /// - `https://example-resource.services.ai.azure.com/anthropic`
-    /// - `https://example-resource.services.ai.azure.com/anthropic`
+    /// - `https://example-resource.openai.azure.com/anthropic`
     ///
     /// This field is mutually exclusive with `bedrock`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -420,7 +420,7 @@ pub struct AzureAnthropicConfig {
     ///
     /// Recommended values:
     /// - `https://example-resource.services.ai.azure.com/anthropic`
-    /// - `https://example-resource.services.ai.azure.com/anthropic`
+    /// - `https://example-resource.openai.azure.com/anthropic`
     ///
     /// The normalizer accepts common user input variants such as:
     /// - a trailing slash

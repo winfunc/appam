@@ -2416,7 +2416,7 @@ mod tests {
 
         let client = AnthropicClient::new(AnthropicConfig {
             azure: Some(super::super::config::AzureAnthropicConfig {
-                base_url: "https://example-resource.services.ai.azure.com/anthropic".to_string(),
+                base_url: "https://example-resource.openai.azure.com/anthropic".to_string(),
                 auth_method: AzureAnthropicAuthMethod::BearerToken,
             }),
             ..Default::default()

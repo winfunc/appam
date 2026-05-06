@@ -50,7 +50,7 @@ use std::collections::HashMap;
 pub struct AzureConfig {
     /// Azure resource name (the subdomain in your Azure OpenAI endpoint).
     ///
-    /// For endpoint `https://example-resource.services.ai.azure.com/`,
+    /// For endpoint `https://example-resource.cognitiveservices.azure.com/`,
     /// the resource name is `example-resource`.
     pub resource_name: String,
 
