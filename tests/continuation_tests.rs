@@ -167,7 +167,7 @@ fn has_tool_call(messages: &[ChatMessage], tool_name: &str) -> bool {
 //
 // The tests above verify the configuration and helper functions.
 // The actual continuation logic in runtime.rs is tested via the hunter
-// agent integration tests in the main example-resource project.
+// downstream integration tests.
 
 #[test]
 fn test_continuation_message_detection() {
