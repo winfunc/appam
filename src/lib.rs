@@ -79,7 +79,7 @@
 //! async fn main() -> Result<()> {
 //!     let agent = AgentBuilder::new("assistant")
 //!         .provider(LlmProvider::OpenAI)
-//!         .model("openai/gpt-5.4")
+//!         .model("openai/gpt-5.5")
 //!         .system_prompt("You are a careful assistant. Use tools before guessing.")
 //!         .with_tool(Arc::new(EchoTool))
 //!         .enable_history()

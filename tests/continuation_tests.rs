@@ -4,6 +4,7 @@
 //! end without calling required completion tools.
 
 use appam::agent::AgentBuilder;
+use appam::agent::{continue_session_streaming_with_messages, continue_session_with_messages};
 use appam::llm::{ChatMessage, Role, ToolSpec};
 use appam::tools::Tool;
 use serde_json::json;
@@ -113,6 +114,12 @@ fn test_default_max_continuations() {
 
     assert_eq!(agent.max_continuations(), 2);
     assert_eq!(agent.continuation_message(), None); // No custom message
+}
+
+#[test]
+fn test_continuation_with_messages_apis_are_publicly_reexported() {
+    let _sync_fn = continue_session_with_messages::<appam::RuntimeAgent>;
+    let _streaming_fn = continue_session_streaming_with_messages::<appam::RuntimeAgent>;
 }
 
 /// Test helper to check if messages contain a continuation attempt

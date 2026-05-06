@@ -50,7 +50,7 @@ use std::collections::HashMap;
 pub struct AzureConfig {
     /// Azure resource name (the subdomain in your Azure OpenAI endpoint).
     ///
-    /// For endpoint `https://example-resource.cognitiveservices.azure.com/`,
+    /// For endpoint `https://example-resource.services.ai.azure.com/`,
     /// the resource name is `example-resource`.
     pub resource_name: String,
 
@@ -75,7 +75,7 @@ pub struct AzureConfig {
 /// ```rust
 /// # use appam::llm::openai::OpenAIConfig;
 /// let config = OpenAIConfig {
-///     model: "gpt-5.4".to_string(),
+///     model: "gpt-5.5".to_string(),
 ///     max_output_tokens: Some(4096),
 ///     ..Default::default()
 /// };
@@ -85,7 +85,7 @@ pub struct AzureConfig {
 /// ```rust
 /// # use appam::llm::openai::{OpenAIConfig, ReasoningConfig, ReasoningEffort, ReasoningSummary};
 /// let config = OpenAIConfig {
-///     model: "gpt-5.4".to_string(),
+///     model: "gpt-5.5".to_string(),
 ///     reasoning: Some(ReasoningConfig {
 ///         effort: Some(ReasoningEffort::High),
 ///         summary: Some(ReasoningSummary::Detailed),
@@ -217,7 +217,7 @@ impl OpenAIConfig {
     }
 
     fn default_model() -> String {
-        "gpt-5.4".to_string()
+        "gpt-5.5".to_string()
     }
 
     fn default_stream() -> bool {
@@ -314,7 +314,7 @@ impl OpenAIConfig {
         {
             bail!(
                 "Model {} only supports temperature, top_p, and logprobs when sampling is enabled. \
-                 GPT-5.4 requires reasoning.effort = \"none\", while older GPT-5/o-series models reject these fields.",
+                 GPT-5.5 requires reasoning.effort = \"none\", while older GPT-5/o-series models reject these fields.",
                 normalized_model
             );
         }
@@ -327,18 +327,18 @@ impl OpenAIConfig {
 ///
 /// # Purpose
 ///
-/// Appam allows provider-prefixed model names such as `openai/gpt-5.4` in shared
+/// Appam allows provider-prefixed model names such as `openai/gpt-5.5` in shared
 /// agent configuration, but the OpenAI Responses API expects the bare model name.
 /// This helper strips only the provider prefix and preserves the exact model
-/// identifier so distinct models like `gpt-5.4` and `gpt-5.4-pro` are not
+/// identifier so distinct models like `gpt-5.5` and `gpt-5.5-pro` are not
 /// conflated.
 ///
 /// # Examples
 ///
 /// ```rust
 /// # use appam::llm::openai::normalize_openai_model;
-/// assert_eq!(normalize_openai_model("openai/gpt-5.4"), "gpt-5.4");
-/// assert_eq!(normalize_openai_model("openai/gpt-5.4-pro"), "gpt-5.4-pro");
+/// assert_eq!(normalize_openai_model("openai/gpt-5.5"), "gpt-5.5");
+/// assert_eq!(normalize_openai_model("openai/gpt-5.5-pro"), "gpt-5.5-pro");
 /// ```
 pub fn normalize_openai_model(model: &str) -> String {
     model
@@ -348,14 +348,14 @@ pub fn normalize_openai_model(model: &str) -> String {
         .to_string()
 }
 
-fn is_gpt_54_pro_model(model: &str) -> bool {
+fn is_gpt_55_pro_model(model: &str) -> bool {
     let model = normalize_openai_model(model);
-    model == "gpt-5.4-pro" || model.starts_with("gpt-5.4-pro-")
+    model == "gpt-5.5-pro" || model.starts_with("gpt-5.5-pro-")
 }
 
-fn is_gpt_54_model(model: &str) -> bool {
+fn is_gpt_55_model(model: &str) -> bool {
     let model = normalize_openai_model(model);
-    model == "gpt-5.4" || model.starts_with("gpt-5.4-") && !is_gpt_54_pro_model(&model)
+    model == "gpt-5.5" || model.starts_with("gpt-5.5-") && !is_gpt_55_pro_model(&model)
 }
 
 fn is_gpt_52_default_none_model(model: &str) -> bool {
@@ -365,11 +365,11 @@ fn is_gpt_52_default_none_model(model: &str) -> bool {
 
 /// Returns whether a model supports `reasoning.effort = "none"`.
 ///
-/// GPT-5.4 defaults to `none` and accepts temperature/top-p/logprobs only in
+/// GPT-5.5 defaults to `none` and accepts temperature/top-p/logprobs only in
 /// that mode. GPT-5.2 retains the same compatibility rules for the direct model
 /// alias, while other GPT-5 variants use older reasoning behavior.
 pub fn model_supports_none_reasoning(model: &str) -> bool {
-    is_gpt_54_model(model) || is_gpt_52_default_none_model(model)
+    is_gpt_55_model(model) || is_gpt_52_default_none_model(model)
 }
 
 fn model_requires_high_reasoning(model: &str) -> bool {
@@ -378,13 +378,13 @@ fn model_requires_high_reasoning(model: &str) -> bool {
 }
 
 fn model_defaults_to_high_reasoning(model: &str) -> bool {
-    is_gpt_54_pro_model(model) || model_requires_high_reasoning(model)
+    is_gpt_55_pro_model(model) || model_requires_high_reasoning(model)
 }
 
 /// Returns whether sampling-oriented parameters can be sent for a model.
 ///
-/// OpenAI's current GPT-5.4 compatibility rules only allow `temperature`,
-/// `top_p`, and `top_logprobs` when GPT-5.4 is running with
+/// OpenAI's current GPT-5.5 compatibility rules only allow `temperature`,
+/// `top_p`, and `top_logprobs` when GPT-5.5 is running with
 /// `reasoning.effort = "none"` (explicitly or via the model default). Older
 /// GPT-5 family models and o-series reasoning models reject these fields.
 pub fn model_supports_sampling_parameters(
@@ -547,7 +547,7 @@ impl ReasoningConfig {
     /// Create an extra-high-effort reasoning configuration with detailed summaries.
     ///
     /// Maximum reasoning effort for the most complex problems. Only supported by
-    /// selected models such as GPT-5.4 and legacy codex variants that expose
+    /// selected models such as GPT-5.5 and legacy codex variants that expose
     /// `xhigh`. Provides the deepest analysis at significantly higher token cost.
     ///
     /// # Examples
@@ -563,11 +563,11 @@ impl ReasoningConfig {
         }
     }
 
-    /// Create a configuration that keeps GPT-5.4 in its lowest-latency
+    /// Create a configuration that keeps GPT-5.5 in its lowest-latency
     /// `reasoning.effort = "none"` mode.
     ///
     /// This is the mode required when sending `temperature`, `top_p`, or
-    /// `top_logprobs` to GPT-5.4.
+    /// `top_logprobs` to GPT-5.5.
     pub fn no_reasoning() -> Self {
         Self {
             effort: Some(ReasoningEffort::None),
@@ -634,7 +634,7 @@ impl ReasoningConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ReasoningEffort {
-    /// Disable deliberate reasoning for the lowest-latency GPT-5.4 mode.
+    /// Disable deliberate reasoning for the lowest-latency GPT-5.5 mode.
     ///
     /// This is also the compatibility mode required when using sampling-oriented
     /// parameters such as `temperature`, `top_p`, or `top_logprobs`.
@@ -661,7 +661,7 @@ pub enum ReasoningEffort {
     High,
     /// Extra-high reasoning for the most complex problems
     ///
-    /// Maximum reasoning effort available. Supported by GPT-5.4 and selected
+    /// Maximum reasoning effort available. Supported by GPT-5.5 and selected
     /// legacy codex models. Provides the deepest analysis at the cost of
     /// significantly more tokens and longer generation time.
     XHigh,
@@ -670,8 +670,8 @@ pub enum ReasoningEffort {
 /// Get the default reasoning effort level for a given model.
 ///
 /// Returns the recommended reasoning effort based on the model's capabilities:
-/// - `gpt-5.4`: None (current default mode)
-/// - `gpt-5.4-pro`: High
+/// - `gpt-5.5`: None (current default mode)
+/// - `gpt-5.5-pro`: High
 /// - `gpt-5-pro`: High (legacy high-only model)
 /// - `gpt-5.1-codex-max`, `gpt-5.2-codex`, `gpt-5.3-codex`: XHigh
 /// - Other GPT-5/o-series reasoning models: High
@@ -688,7 +688,7 @@ pub enum ReasoningEffort {
 ///
 /// ```rust
 /// # use appam::llm::openai::default_reasoning_effort_for_model;
-/// let effort = default_reasoning_effort_for_model("gpt-5.4");
+/// let effort = default_reasoning_effort_for_model("gpt-5.5");
 /// assert!(matches!(effort, appam::llm::openai::ReasoningEffort::None));
 ///
 /// let effort = default_reasoning_effort_for_model("gpt-5.1-codex-max");
@@ -725,8 +725,8 @@ pub fn default_reasoning_effort_for_model(model: &str) -> ReasoningEffort {
 /// # Supported Models
 ///
 /// `XHigh` is currently supported for:
-/// - `gpt-5.4`
-/// - `gpt-5.4-pro`
+/// - `gpt-5.5`
+/// - `gpt-5.5-pro`
 /// - `gpt-5.1-codex-max`
 /// - `gpt-5.2-codex`
 /// - `gpt-5.3-codex`
@@ -740,8 +740,8 @@ pub fn model_supports_xhigh_reasoning(model: &str) -> bool {
 
     matches!(
         model.as_str(),
-        "gpt-5.4" | "gpt-5.1-codex-max" | "gpt-5.2-codex" | "gpt-5.3-codex"
-    ) || model.starts_with("gpt-5.4-")
+        "gpt-5.5" | "gpt-5.1-codex-max" | "gpt-5.2-codex" | "gpt-5.3-codex"
+    ) || model.starts_with("gpt-5.5-")
 }
 
 /// Resolves the effective reasoning effort for a specific model.
@@ -1001,7 +1001,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = OpenAIConfig::default();
-        assert_eq!(config.model, "gpt-5.4");
+        assert_eq!(config.model, "gpt-5.5");
         assert_eq!(config.base_url, "https://api.openai.com/v1");
         assert!(config.stream);
         assert_eq!(config.max_output_tokens, Some(4096));
@@ -1009,18 +1009,18 @@ mod tests {
 
     #[test]
     fn test_normalize_openai_model_strips_provider_prefix() {
-        assert_eq!(normalize_openai_model("openai/gpt-5.4"), "gpt-5.4");
-        assert_eq!(normalize_openai_model("openai/gpt-5.4-pro"), "gpt-5.4-pro");
+        assert_eq!(normalize_openai_model("openai/gpt-5.5"), "gpt-5.5");
+        assert_eq!(normalize_openai_model("openai/gpt-5.5-pro"), "gpt-5.5-pro");
     }
 
     #[test]
-    fn test_default_reasoning_effort_uses_gpt54_none_mode() {
+    fn test_default_reasoning_effort_uses_gpt55_none_mode() {
         assert_eq!(
-            default_reasoning_effort_for_model("gpt-5.4"),
+            default_reasoning_effort_for_model("gpt-5.5"),
             ReasoningEffort::None
         );
         assert_eq!(
-            default_reasoning_effort_for_model("gpt-5.4-pro"),
+            default_reasoning_effort_for_model("gpt-5.5-pro"),
             ReasoningEffort::High
         );
         assert_eq!(
@@ -1030,27 +1030,27 @@ mod tests {
     }
 
     #[test]
-    fn test_model_supports_sampling_parameters_only_for_gpt54_none() {
-        assert!(model_supports_sampling_parameters("gpt-5.4", None));
+    fn test_model_supports_sampling_parameters_only_for_gpt55_none() {
+        assert!(model_supports_sampling_parameters("gpt-5.5", None));
         assert!(model_supports_sampling_parameters(
-            "gpt-5.4",
+            "gpt-5.5",
             Some(ReasoningEffort::None)
         ));
         assert!(!model_supports_sampling_parameters(
-            "gpt-5.4",
+            "gpt-5.5",
             Some(ReasoningEffort::High)
         ));
         assert!(!model_supports_sampling_parameters(
             "gpt-5-mini",
             Some(ReasoningEffort::High)
         ));
-        assert!(!model_supports_sampling_parameters("gpt-5.4-pro", None));
+        assert!(!model_supports_sampling_parameters("gpt-5.5-pro", None));
     }
 
     #[test]
-    fn test_validate_rejects_sampling_with_gpt54_reasoning() {
+    fn test_validate_rejects_sampling_with_gpt55_reasoning() {
         let config = OpenAIConfig {
-            model: "gpt-5.4".to_string(),
+            model: "gpt-5.5".to_string(),
             reasoning: Some(ReasoningConfig::high_effort()),
             temperature: Some(0.7),
             ..Default::default()
@@ -1060,9 +1060,9 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_allows_sampling_with_gpt54_none_reasoning() {
+    fn test_validate_allows_sampling_with_gpt55_none_reasoning() {
         let config = OpenAIConfig {
-            model: "gpt-5.4".to_string(),
+            model: "gpt-5.5".to_string(),
             reasoning: Some(ReasoningConfig::no_reasoning()),
             temperature: Some(0.7),
             top_p: Some(0.9),
@@ -1076,7 +1076,7 @@ mod tests {
     #[test]
     fn test_validate_rejects_summary_when_reasoning_is_none() {
         let config = OpenAIConfig {
-            model: "gpt-5.4".to_string(),
+            model: "gpt-5.5".to_string(),
             reasoning: Some(ReasoningConfig {
                 effort: Some(ReasoningEffort::None),
                 summary: Some(ReasoningSummary::Detailed),
@@ -1112,9 +1112,9 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_rejects_none_reasoning_for_gpt54_pro() {
+    fn test_validate_rejects_none_reasoning_for_gpt55_pro() {
         let config = OpenAIConfig {
-            model: "gpt-5.4-pro".to_string(),
+            model: "gpt-5.5-pro".to_string(),
             reasoning: Some(ReasoningConfig {
                 effort: Some(ReasoningEffort::None),
                 summary: None,
@@ -1126,9 +1126,9 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_allows_xhigh_reasoning_for_gpt54_pro() {
+    fn test_validate_allows_xhigh_reasoning_for_gpt55_pro() {
         let config = OpenAIConfig {
-            model: "gpt-5.4-pro".to_string(),
+            model: "gpt-5.5-pro".to_string(),
             reasoning: Some(ReasoningConfig {
                 effort: Some(ReasoningEffort::XHigh),
                 summary: Some(ReasoningSummary::Detailed),
@@ -1148,9 +1148,9 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_rejects_summary_when_gpt54_default_resolves_to_none() {
+    fn test_validate_rejects_summary_when_gpt55_default_resolves_to_none() {
         let config = OpenAIConfig {
-            model: "gpt-5.4".to_string(),
+            model: "gpt-5.5".to_string(),
             reasoning: Some(ReasoningConfig {
                 effort: None,
                 summary: Some(ReasoningSummary::Detailed),

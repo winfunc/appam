@@ -15,7 +15,7 @@ cargo run --example coding-agent-openai-responses
 ## What this example actually configures
 
 - `LlmProvider::OpenAI`
-- Model `gpt-5.4`
+- Model `gpt-5.5`
 - OpenAI reasoning with `ReasoningEffort::High` and `ReasoningSummary::Detailed`
 - `max_tokens(8192)`
 - The shared coding tools: `read_file`, `write_file`, `bash`, and `list_files`
@@ -25,9 +25,9 @@ cargo run --example coding-agent-openai-responses
 ```rust
 let agent = AgentBuilder::new("openai-coding-assistant")
     .provider(LlmProvider::OpenAI)
-    .model("gpt-5.4")
+    .model("gpt-5.5")
     .system_prompt(
-        "You are an expert coding assistant powered by GPT-5.4. \
+        "You are an expert coding assistant powered by GPT-5.5. \
          You have access to file operations, bash commands, and directory listing. \
          Help users analyze code, refactor projects, debug issues, and manage files. \
          Always think through problems step-by-step and use tools when appropriate.",

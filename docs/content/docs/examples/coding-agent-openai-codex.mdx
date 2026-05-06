@@ -11,7 +11,7 @@ interactive ChatGPT login fallback when no cached Codex credential is available.
 ## Run
 
 ```bash
-export OPENAI_CODEX_MODEL="gpt-5.4"                    # optional
+export OPENAI_CODEX_MODEL="gpt-5.5"                    # optional
 export OPENAI_CODEX_ACCESS_TOKEN="eyJ..."              # optional explicit token
 export OPENAI_CODEX_AUTH_FILE="$HOME/.appam/auth.json" # optional auth cache override
 
@@ -21,7 +21,7 @@ cargo run --example coding-agent-openai-codex
 ## What this example actually configures
 
 - `LlmProvider::OpenAICodex`
-- Model `OPENAI_CODEX_MODEL` or `gpt-5.4`
+- Model `OPENAI_CODEX_MODEL` or `gpt-5.5`
 - OpenAI reasoning with `ReasoningEffort::High` and `ReasoningSummary::Detailed`
 - `max_tokens(8192)`
 - The shared coding tools: `read_file`, `write_file`, `bash`, and `list_files`

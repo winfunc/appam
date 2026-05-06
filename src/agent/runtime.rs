@@ -358,6 +358,43 @@ fn emit_stream_error_event(
     }
 }
 
+/// Build a user message for continuation and reload flows.
+///
+/// Appam uses the same message shape for direct user follow-up turns and for
+/// runtime-owned continuation prompts. Keeping that construction in one helper
+/// avoids subtle field drift between the default continuation path and the
+/// caller-supplied transcript continuation path added for Compose-style agent
+/// reloads.
+fn build_user_message(content: impl Into<String>) -> ChatMessage {
+    ChatMessage {
+        role: Role::User,
+        name: None,
+        tool_call_id: None,
+        content: Some(content.into()),
+        tool_calls: None,
+        reasoning: None,
+        raw_content_blocks: None,
+        tool_metadata: None,
+        timestamp: Some(chrono::Utc::now()),
+        id: None,
+        provider_response_id: None,
+        status: None,
+    }
+}
+
+/// Replace the transcript on a persisted session while preserving metadata.
+///
+/// The continuation-with-messages API needs to retain the original session's
+/// durable identity, timing, and usage accounting while swapping out the
+/// message list that will be replayed to the model. This helper performs that
+/// replacement explicitly so tests can verify the metadata-preservation
+/// contract without exercising live provider traffic.
+fn replace_session_messages(session: &Session, messages: Vec<ChatMessage>) -> Session {
+    let mut updated = session.clone();
+    updated.messages = messages;
+    updated
+}
+
 /// Apply per-agent parallel tool-call defaults to provider configuration.
 ///
 /// Appam intentionally keeps provider-side tool batching disabled unless the
@@ -1468,6 +1505,106 @@ pub async fn continue_session_run<A: Agent + ?Sized>(
     continue_session_streaming(agent, session_id, user_prompt, Box::new(consumer)).await
 }
 
+/// Continue an existing session using a caller-supplied transcript.
+///
+/// This additive API is intended for advanced runtimes that need to rewrite the
+/// loaded transcript before the next turn while still preserving Appam's normal
+/// continuation behavior and persistence semantics. Typical uses include prompt
+/// hot reload, harness activation, or policy injection layers that replace the
+/// stored system message before continuing the same durable session.
+///
+/// The supplied `messages` fully replace the loaded session transcript for this
+/// continuation attempt. The existing session ID, timestamps, accumulated usage,
+/// history persistence, and trace behavior remain unchanged.
+///
+/// # Parameters
+///
+/// - `agent`: Agent whose runtime configuration and tools should be used
+/// - `session_id`: ID of the persisted session to continue
+/// - `messages`: Full transcript to replay for the next model turn
+///
+/// # Returns
+///
+/// Returns the updated persisted session after the continuation turn completes.
+///
+/// # Examples
+///
+/// ```no_run
+/// use appam::agent::{
+///     continue_session_with_messages, AgentBuilder, Session,
+/// };
+/// use appam::llm::{ChatMessage, Role};
+///
+/// # async fn example(session: Session) -> anyhow::Result<()> {
+/// let agent = AgentBuilder::new("rewriter")
+///     .system_prompt("You are a rewritten agent.")
+///     .enable_history()
+///     .build()?;
+///
+/// let rewritten_messages = vec![
+///     ChatMessage {
+///         role: Role::System,
+///         name: None,
+///         tool_call_id: None,
+///         content: Some("Replacement system prompt".to_string()),
+///         tool_calls: None,
+///         reasoning: None,
+///         raw_content_blocks: None,
+///         tool_metadata: None,
+///         timestamp: None,
+///         id: None,
+///         provider_response_id: None,
+///         status: None,
+///     },
+///     ChatMessage {
+///         role: Role::User,
+///         name: None,
+///         tool_call_id: None,
+///         content: Some("Continue using the updated prompt.".to_string()),
+///         tool_calls: None,
+///         reasoning: None,
+///         raw_content_blocks: None,
+///         tool_metadata: None,
+///         timestamp: None,
+///         id: None,
+///         provider_response_id: None,
+///         status: None,
+///     },
+/// ];
+///
+/// let _continued =
+///     continue_session_with_messages(&agent, &session.session_id, rewritten_messages).await?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Edge cases
+///
+/// - If `messages` is empty, the provider request will use an empty transcript;
+///   callers are responsible for supplying a meaningful continuation context.
+/// - Existing session metadata is preserved even when the transcript is fully
+///   replaced.
+///
+/// # Errors
+///
+/// Returns an error if history is disabled, the session cannot be loaded, the
+/// provider request fails, tool execution fails, or session persistence fails.
+///
+/// # Security considerations
+///
+/// Callers must treat `messages` as sensitive session state. Appam persists the
+/// supplied transcript to the history database on successful continuation, so
+/// secret-bearing prompts or tool outputs should only be injected deliberately.
+#[instrument(skip(agent, messages), fields(agent = agent.name(), session_id = %session_id))]
+pub async fn continue_session_with_messages<A: Agent + ?Sized>(
+    agent: &A,
+    session_id: &str,
+    messages: Vec<ChatMessage>,
+) -> Result<Session> {
+    let consumer = ConsoleConsumer::default();
+    continue_session_streaming_with_messages(agent, session_id, messages, Box::new(consumer)).await
+}
+
 /// Continue an existing session with custom streaming.
 ///
 /// Like `continue_session_run()`, but with a custom stream consumer.
@@ -1527,6 +1664,104 @@ pub async fn continue_session_streaming<A: Agent + ?Sized>(
         "Continuing session with existing messages"
     );
 
+    // Add new user message to existing messages.
+    session.messages.push(build_user_message(user_prompt));
+
+    let messages = session.messages.clone();
+    continue_loaded_session_streaming(
+        agent, session_id, consumer, cfg, logs_dir, history, session, messages,
+    )
+    .await
+}
+
+/// Continue an existing session with a caller-supplied transcript and custom streaming.
+///
+/// This function preserves the existing continuation mechanics while allowing
+/// higher-level runtimes to replace the loaded message list before the next
+/// provider call. It is intentionally additive so existing agents that rely on
+/// `continue_session_streaming()` keep their exact behavior.
+///
+/// # Parameters
+///
+/// - `agent`: Agent whose runtime configuration and tool registry should be used
+/// - `session_id`: ID of the persisted session to continue
+/// - `messages`: Full transcript to replay for the next turn
+/// - `consumer`: Stream consumer that should receive continuation events
+///
+/// # Returns
+///
+/// Returns the updated session after the continuation turn completes and is
+/// re-persisted.
+///
+/// # Errors
+///
+/// Returns an error if history is disabled, the session does not exist, the
+/// consumer fails, provider execution fails, or persistence fails.
+#[instrument(skip(agent, consumer, messages), fields(agent = agent.name(), session_id = %session_id))]
+pub async fn continue_session_streaming_with_messages<A: Agent + ?Sized>(
+    agent: &A,
+    session_id: &str,
+    messages: Vec<ChatMessage>,
+    consumer: Box<dyn StreamConsumer>,
+) -> Result<Session> {
+    info!("Continuing existing session with caller-supplied messages");
+
+    // Load configuration from defaults and environment variables only
+    // (does NOT load appam.toml automatically - user must load explicitly if needed)
+    let mut cfg = crate::config::load_config_from_env()?;
+
+    // Override provider if agent specifies one
+    if let Some(provider) = agent.provider() {
+        info!(provider = %provider, "Using agent-specific provider override for continuation");
+        cfg.provider = provider;
+    }
+
+    // Apply agent-specific configuration overrides (programmatic config has highest priority)
+    agent.apply_config_overrides(&mut cfg);
+    apply_parallel_tool_call_defaults(agent, &mut cfg);
+
+    let logs_dir = crate::logging::init_logging(&cfg.logging)?;
+
+    // Initialize session history
+    let history = SessionHistory::new(cfg.history.clone()).await?;
+
+    // Load existing session
+    let session = history
+        .load_session(session_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Session not found: {}", session_id))?;
+
+    info!(
+        session_id = %session_id,
+        supplied_messages = messages.len(),
+        persisted_messages = session.messages.len(),
+        "Loaded persisted session for caller-supplied continuation"
+    );
+
+    continue_loaded_session_streaming(
+        agent,
+        session_id,
+        consumer,
+        cfg,
+        logs_dir,
+        history,
+        replace_session_messages(&session, messages.clone()),
+        messages,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn continue_loaded_session_streaming<A: Agent + ?Sized>(
+    agent: &A,
+    session_id: &str,
+    consumer: Box<dyn StreamConsumer>,
+    cfg: crate::config::AppConfig,
+    logs_dir: std::path::PathBuf,
+    history: SessionHistory,
+    mut session: Session,
+    mut messages: Vec<ChatMessage>,
+) -> Result<Session> {
     // Setup multi-consumer with trace consumer (if enabled)
     let multi_consumer = if cfg.logging.enable_traces {
         let trace_consumer = TraceConsumer::new(&logs_dir, session_id, cfg.logging.trace_format)?;
@@ -1542,23 +1777,6 @@ pub async fn continue_session_streaming<A: Agent + ?Sized>(
         session_id: session_id.to_string(),
     })?;
 
-    // Add new user message to existing messages
-    session.messages.push(ChatMessage {
-        role: Role::User,
-        name: None,
-        tool_call_id: None,
-        content: Some(user_prompt.to_string()),
-        tool_calls: None,
-        reasoning: None,
-        raw_content_blocks: None,
-        tool_metadata: None,
-        timestamp: Some(chrono::Utc::now()),
-        id: None,
-        provider_response_id: None,
-        status: None,
-    });
-
-    let mut messages = session.messages.clone();
     let tool_specs = agent.available_tools()?;
 
     debug!(
@@ -1582,7 +1800,7 @@ pub async fn continue_session_streaming<A: Agent + ?Sized>(
             tracker.inner.lock().unwrap().clone_from(&u);
             tracker
         })
-        .unwrap_or_else(crate::llm::usage::UsageTracker::new);
+        .unwrap_or_default();
     let provider_variant = client.provider();
     let provider_usage_key = provider_variant.pricing_key().to_string();
     let model_name = select_usage_model(&cfg, &provider_variant);
@@ -2020,11 +2238,11 @@ fn tool_specs_to_unified(specs: &[crate::llm::ToolSpec]) -> Vec<crate::llm::Unif
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_finalized_tool_calls, execute_pending_tool_calls,
+        apply_finalized_tool_calls, execute_pending_tool_calls, replace_session_messages,
         required_completion_continuation_decision, select_usage_model,
         RequiredCompletionContinuationDecision,
     };
-    use crate::agent::AgentBuilder;
+    use crate::agent::{AgentBuilder, Session};
     use crate::config::AppConfig;
     use crate::llm::{ChatMessage, Role, ToolCall, ToolCallFunction, ToolSpec};
     use crate::tools::{AsyncTool, Tool, ToolConcurrency, ToolContext};
@@ -2123,11 +2341,11 @@ mod tests {
     #[test]
     fn select_usage_model_prefers_openai_pricing_model_override() {
         let mut cfg = AppConfig::default();
-        cfg.openai.model = "gpt-5.4-fast".to_string();
-        cfg.openai.pricing_model = Some("gpt-5.4".to_string());
+        cfg.openai.model = "gpt-5.5-azure".to_string();
+        cfg.openai.pricing_model = Some("gpt-5.5".to_string());
 
         let selected = select_usage_model(&cfg, &crate::llm::LlmProvider::OpenAI);
-        assert_eq!(selected, "gpt-5.4");
+        assert_eq!(selected, "gpt-5.5");
     }
 
     #[test]
@@ -2232,6 +2450,33 @@ mod tests {
 
         let decision = required_completion_continuation_decision(&agent, &messages);
         assert_eq!(decision, RequiredCompletionContinuationDecision::None);
+    }
+
+    #[test]
+    fn replace_session_messages_preserves_session_metadata() {
+        let original = Session {
+            session_id: "session-123".to_string(),
+            agent_name: "compose-agent".to_string(),
+            model: "openai/gpt-5.5".to_string(),
+            messages: vec![user_message("old prompt")],
+            started_at: Some(chrono::Utc::now()),
+            ended_at: None,
+            usage: Some(crate::llm::usage::AggregatedUsage::default()),
+        };
+
+        let replacement_messages = vec![user_message("new prompt")];
+        let updated = replace_session_messages(&original, replacement_messages.clone());
+
+        assert_eq!(updated.session_id, original.session_id);
+        assert_eq!(updated.agent_name, original.agent_name);
+        assert_eq!(updated.model, original.model);
+        assert_eq!(updated.started_at, original.started_at);
+        assert!(updated.usage.is_some());
+        assert_eq!(updated.messages.len(), replacement_messages.len());
+        assert_eq!(
+            updated.messages[0].content.as_deref(),
+            replacement_messages[0].content.as_deref()
+        );
     }
 
     struct SleepTool {

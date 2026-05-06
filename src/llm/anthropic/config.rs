@@ -7,7 +7,6 @@
 use super::types::CacheControl;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-use tracing::warn;
 
 /// Configuration for the Anthropic Claude API client.
 ///
@@ -219,7 +218,7 @@ pub struct AnthropicConfig {
     /// such as:
     ///
     /// - `https://example-resource.services.ai.azure.com/anthropic`
-    /// - `https://example-resource.openai.azure.com/anthropic`
+    /// - `https://example-resource.services.ai.azure.com/anthropic`
     ///
     /// This field is mutually exclusive with `bedrock`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -294,18 +293,6 @@ impl AnthropicConfig {
                     ));
                 }
             }
-        }
-
-        // Validate beta features
-        if self.beta_features.context_1m
-            && !self.model.contains("sonnet-4")
-            && !self.model.contains("sonnet-4-5")
-        {
-            warn!(
-                    "1M context window (context-1m-2025-08-07 beta) is only supported for Claude Sonnet 4 and 4.5. \
-                     Current model: {}. This may fail.",
-                    self.model
-                );
         }
 
         Ok(())
@@ -433,7 +420,7 @@ pub struct AzureAnthropicConfig {
     ///
     /// Recommended values:
     /// - `https://example-resource.services.ai.azure.com/anthropic`
-    /// - `https://example-resource.openai.azure.com/anthropic`
+    /// - `https://example-resource.services.ai.azure.com/anthropic`
     ///
     /// The normalizer accepts common user input variants such as:
     /// - a trailing slash
@@ -954,6 +941,29 @@ impl BetaFeatures {
     /// For Bedrock: values are sent as the `anthropic_beta` JSON array
     /// in the request body.
     pub fn to_header_values(&self) -> Vec<String> {
+        self.to_header_values_for_model(None)
+    }
+
+    /// Get beta header values that are valid for the selected Anthropic model.
+    ///
+    /// # Arguments
+    ///
+    /// * `model` - Optional model identifier used to drop model-specific beta
+    ///   flags that Anthropic rejects for other model families.
+    ///
+    /// # Returns
+    ///
+    /// A list of beta header values safe to include for `model`. Model-agnostic
+    /// beta flags are preserved. `context-1m-2025-08-07` is included only for
+    /// Claude Sonnet 4 and 4.5 because Anthropic rejects that beta for Opus.
+    ///
+    /// # Security
+    ///
+    /// This function does not inspect or log prompt content, credentials, or
+    /// request bodies. It only filters static beta feature names from local
+    /// configuration so provider requests fail closed on unsupported model
+    /// feature combinations.
+    pub fn to_header_values_for_model(&self, model: Option<&str>) -> Vec<String> {
         let mut values = Vec::new();
 
         if self.fine_grained_tool_streaming {
@@ -965,7 +975,7 @@ impl BetaFeatures {
         if self.context_management {
             values.push("context-management-2025-06-27".to_string());
         }
-        if self.context_1m {
+        if self.context_1m && model.map(context_1m_supported_by_model).unwrap_or(true) {
             values.push("context-1m-2025-08-07".to_string());
         }
         if self.effort {
@@ -983,6 +993,29 @@ impl BetaFeatures {
             || self.context_1m
             || self.effort
     }
+
+    /// Returns whether any beta feature remains enabled for `model`.
+    ///
+    /// This is the model-aware counterpart to [`Self::has_any`]. Use it when
+    /// deciding whether to emit provider beta headers for a concrete request.
+    pub fn has_any_for_model(&self, model: &str) -> bool {
+        !self.to_header_values_for_model(Some(model)).is_empty()
+    }
+}
+
+fn context_1m_supported_by_model(model: &str) -> bool {
+    let normalized = model.to_ascii_lowercase();
+    if normalized.contains("claude-4-sonnet") {
+        return true;
+    }
+
+    ["claude-sonnet-4-5", "claude-sonnet-4-20250514"]
+        .iter()
+        .any(|supported| normalized.contains(supported))
+        || normalized
+            .rsplit(['.', '/', ':'])
+            .next()
+            .is_some_and(|tail| tail == "claude-sonnet-4")
 }
 
 /// AWS Bedrock authentication method.
@@ -1594,6 +1627,49 @@ mod tests {
         assert_eq!(headers.len(), 2);
         assert!(headers.contains(&"fine-grained-tool-streaming-2025-05-14".to_string()));
         assert!(headers.contains(&"interleaved-thinking-2025-05-14".to_string()));
+    }
+
+    #[test]
+    fn beta_features_omit_1m_context_for_opus_models() {
+        let beta = BetaFeatures {
+            context_1m: true,
+            fine_grained_tool_streaming: true,
+            ..Default::default()
+        };
+
+        let headers = beta.to_header_values_for_model(Some("claude-opus-4-7"));
+
+        assert!(headers.contains(&"fine-grained-tool-streaming-2025-05-14".to_string()));
+        assert!(!headers.contains(&"context-1m-2025-08-07".to_string()));
+        assert!(beta.has_any_for_model("claude-opus-4-7"));
+    }
+
+    #[test]
+    fn beta_features_keep_1m_context_for_supported_sonnet_models() {
+        let beta = BetaFeatures {
+            context_1m: true,
+            ..Default::default()
+        };
+
+        let sonnet_4_headers = beta.to_header_values_for_model(Some("claude-sonnet-4-20250514"));
+        let sonnet_45_headers = beta.to_header_values_for_model(Some("claude-sonnet-4-5"));
+
+        assert!(sonnet_4_headers.contains(&"context-1m-2025-08-07".to_string()));
+        assert!(sonnet_45_headers.contains(&"context-1m-2025-08-07".to_string()));
+        assert!(beta.has_any_for_model("claude-sonnet-4-5"));
+    }
+
+    #[test]
+    fn beta_features_do_not_treat_sonnet_46_as_1m_context_supported() {
+        let beta = BetaFeatures {
+            context_1m: true,
+            ..Default::default()
+        };
+
+        let headers = beta.to_header_values_for_model(Some("claude-sonnet-4-6"));
+
+        assert!(headers.is_empty());
+        assert!(!beta.has_any_for_model("claude-sonnet-4-6"));
     }
 
     #[test]

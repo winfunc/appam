@@ -208,7 +208,7 @@ impl Agent {
 /// Infer an [`LlmProvider`] from a shared model string.
 ///
 /// The helper understands both provider-prefixed forms such as
-/// `"openai/gpt-5.4"` and common bare model names such as `"gpt-5.4"` or
+/// `"openai/gpt-5.5"` and common bare model names such as `"gpt-5.5"` or
 /// `"gemini-2.5-flash"`. Unknown strings intentionally fall back to
 /// OpenRouter Responses because that backend can proxy many upstream models.
 ///
@@ -219,7 +219,7 @@ impl Agent {
 /// # use appam::llm::LlmProvider;
 /// assert!(matches!(detect_provider("anthropic/claude-sonnet-4-5"), LlmProvider::Anthropic));
 /// assert!(matches!(detect_provider("openai/gpt-4o"), LlmProvider::OpenAI));
-/// assert!(matches!(detect_provider("openai-codex/gpt-5.4"), LlmProvider::OpenAICodex));
+/// assert!(matches!(detect_provider("openai-codex/gpt-5.5"), LlmProvider::OpenAICodex));
 /// assert!(matches!(detect_provider("claude-opus-4"), LlmProvider::Anthropic));
 /// assert!(matches!(detect_provider("gpt-4"), LlmProvider::OpenAI));
 /// assert!(matches!(detect_provider("o1-preview"), LlmProvider::OpenAI));
@@ -415,7 +415,7 @@ mod tests {
     #[test]
     fn test_detect_provider_openai_codex() {
         assert!(matches!(
-            detect_provider("openai-codex/gpt-5.4"),
+            detect_provider("openai-codex/gpt-5.5"),
             LlmProvider::OpenAICodex
         ));
     }

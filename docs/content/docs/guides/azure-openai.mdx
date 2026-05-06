@@ -11,7 +11,7 @@ Appam's Azure support uses the OpenAI Responses client with an Azure-specific pr
 export AZURE_OPENAI_API_KEY="..."
 export AZURE_OPENAI_RESOURCE="my-resource"
 export AZURE_OPENAI_API_VERSION="2025-04-01-preview"   # optional
-export AZURE_OPENAI_MODEL="gpt-5.4"                    # optional, used by the example binary
+export AZURE_OPENAI_MODEL="gpt-5.5-azure"              # optional, used by the example binary
 ```
 
 The resource name is the subdomain of your Azure endpoint. In the current crate, Azure URLs are built as:
@@ -32,7 +32,7 @@ let agent = AgentBuilder::new("azure-agent")
         resource_name: "my-resource".to_string(),
         api_version: "2025-04-01-preview".to_string(),
     })
-    .model("gpt-5.4")
+    .model("gpt-5.5-azure")
     .system_prompt("You are a helpful assistant.")
     .build()?;
 ```
@@ -57,7 +57,7 @@ let agent = AgentBuilder::new("azure-reasoning")
         resource_name: "my-resource".to_string(),
         api_version: "2025-04-01-preview".to_string(),
     })
-    .model("gpt-5.4")
+    .model("gpt-5.5-azure")
     .system_prompt("You are a reasoning assistant.")
     .openai_reasoning(ReasoningConfig::high_effort())
     .build()?;

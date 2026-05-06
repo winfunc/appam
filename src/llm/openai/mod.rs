@@ -40,13 +40,13 @@
 //! }
 //! ```
 //!
-//! With reasoning (GPT-5.4 and other reasoning-capable models):
+//! With reasoning (GPT-5.5 and other reasoning-capable models):
 //!
 //! ```rust,no_run
 //! use appam::llm::openai::{OpenAIClient, OpenAIConfig, ReasoningConfig, ReasoningEffort, ReasoningSummary};
 //!
 //! let config = OpenAIConfig {
-//!     model: "gpt-5.4".to_string(),
+//!     model: "gpt-5.5".to_string(),
 //!     reasoning: Some(ReasoningConfig {
 //!         effort: Some(ReasoningEffort::High),
 //!         summary: Some(ReasoningSummary::Detailed),
@@ -61,7 +61,7 @@
 //! use appam::llm::openai::{OpenAIConfig, ReasoningConfig};
 //!
 //! let config = OpenAIConfig {
-//!     model: "gpt-5.4".to_string(),
+//!     model: "gpt-5.5".to_string(),
 //!     reasoning: Some(ReasoningConfig::high_effort()),
 //!     ..Default::default()
 //! };

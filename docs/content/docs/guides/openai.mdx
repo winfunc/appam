@@ -19,7 +19,7 @@ use appam::prelude::*;
 #[tokio::main]
 async fn main() -> Result<()> {
     let agent = Agent::quick(
-        "openai/gpt-5.4",
+        "openai/gpt-5.5",
         "You are a helpful assistant.",
         vec![],
     )?;
@@ -41,7 +41,7 @@ use appam::prelude::*;
 
 let agent = AgentBuilder::new("openai-agent")
     .provider(LlmProvider::OpenAI)
-    .model("gpt-5.4")
+    .model("gpt-5.5")
     .system_prompt("You are a helpful assistant.")
     .build()?;
 ```
@@ -64,7 +64,7 @@ use appam::prelude::*;
 
 let agent = AgentBuilder::new("reasoning-agent")
     .provider(LlmProvider::OpenAI)
-    .model("gpt-5.4")
+    .model("gpt-5.5")
     .system_prompt("You are a reasoning assistant.")
     .openai_reasoning(ReasoningConfig::high_effort())
     .build()?;
@@ -72,9 +72,9 @@ let agent = AgentBuilder::new("reasoning-agent")
 
 Convenience constructors include `auto()`, `high_effort()`, `xhigh_effort()`, `low_latency()`, `minimal()`, and `no_reasoning()`.
 
-## GPT-5.4 Sampling Note
+## GPT-5.5 Sampling Note
 
-The current OpenAI config code only allows `temperature`, `top_p`, and `top_logprobs` for GPT-5.4 when reasoning is in `None` mode. Use `ReasoningConfig::no_reasoning()` if you need those sampling controls on GPT-5.4.
+The current OpenAI config code only allows `temperature`, `top_p`, and `top_logprobs` for GPT-5.5 when reasoning is in `None` mode. Use `ReasoningConfig::no_reasoning()` if you need those sampling controls on GPT-5.5.
 
 ## Model-Aware Helpers
 

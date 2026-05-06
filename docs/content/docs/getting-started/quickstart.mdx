@@ -75,7 +75,7 @@ The model string uses the format `provider/model-name`. Appam auto-detects the p
 | `anthropic/claude-sonnet-4-5` | Anthropic Messages API |
 | `anthropic/claude-opus-4` | Anthropic Messages API |
 | `openai/gpt-4o` | OpenAI Responses API |
-| `openai-codex/gpt-5.4` | OpenAI Codex Responses API |
+| `openai-codex/gpt-5.5` | OpenAI Codex Responses API |
 | `openai/o3-pro` | OpenAI Responses API |
 | `openrouter/anthropic/claude-sonnet-4-5` | OpenRouter Responses API |
 | `vertex/gemini-2.5-flash` | Google Vertex AI |
@@ -95,7 +95,7 @@ let agent = Agent::quick("anthropic/claude-sonnet-4-5", "You are helpful.", vec!
 let agent = Agent::quick("openai/gpt-4o", "You are helpful.", vec![])?;
 
 // OpenAI Codex
-let agent = Agent::quick("openai-codex/gpt-5.4", "You are helpful.", vec![])?;
+let agent = Agent::quick("openai-codex/gpt-5.5", "You are helpful.", vec![])?;
 
 // OpenRouter (can proxy to any model)
 let agent = Agent::quick("openrouter/anthropic/claude-sonnet-4-5", "You are helpful.", vec![])?;

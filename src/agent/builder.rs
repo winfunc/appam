@@ -249,7 +249,7 @@ impl AgentBuilder {
     /// Set the model identifier sent to the selected provider.
     ///
     /// Appam accepts provider-prefixed shared model strings such as
-    /// `"openai/gpt-5.4"` as well as provider-native identifiers when the
+    /// `"openai/gpt-5.5"` as well as provider-native identifiers when the
     /// selected provider expects them.
     ///
     /// # Examples

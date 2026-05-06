@@ -1132,13 +1132,13 @@ mod tests {
                 "us.anthropic.claude-sonnet-4-5-20250514-v1:0",
                 "claude-sonnet-4-5",
             ),
-            ("openai", "openai/gpt-5.4", "gpt-5.4"),
+            ("openai", "openai/gpt-5.5", "gpt-5.5"),
             (
                 "openrouter",
                 "anthropic/claude-haiku-4",
                 "anthropic/claude-haiku-4.5",
             ),
-            ("openrouter", "gpt-5.4", "openai/gpt-5.4"),
+            ("openrouter", "gpt-5.5", "openai/gpt-5.5"),
         ];
 
         for (provider, alias, canonical) in cases {
@@ -1241,7 +1241,7 @@ mod tests {
 
     #[test]
     fn test_reasoning_tokens_fall_back_to_selected_output_rate_when_reasoning_price_is_missing() {
-        let cases = [("openai", "gpt-5.4"), ("vertex", "gemini-3.1-pro-preview")];
+        let cases = [("openai", "gpt-5.5"), ("vertex", "gemini-3.1-pro-preview")];
 
         for (provider, model) in cases {
             let pricing = get_model_pricing(provider, model);

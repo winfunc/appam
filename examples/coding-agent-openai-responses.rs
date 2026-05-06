@@ -1,4 +1,4 @@
-//! TUI Coding Agent using OpenAI API with GPT-5.4
+//! TUI Coding Agent using OpenAI API with GPT-5.5
 //!
 //! A minimal terminal interface coding assistant with:
 //! - Multi-turn conversation loop
@@ -204,14 +204,14 @@ fn list_files(input: ListFilesInput) -> Result<ListFilesOutput> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    println!("🚀 Coding Agent - GPT-5.4 (OpenAI)\n");
+    println!("🚀 Coding Agent - GPT-5.5 (OpenAI)\n");
 
     // Build agent with OpenAI-specific configuration
     let agent = AgentBuilder::new("openai-coding-assistant")
         .provider(LlmProvider::OpenAI)
-        .model("gpt-5.4")
+        .model("gpt-5.5")
         .system_prompt(
-            "You are an expert coding assistant powered by GPT-5.4. \
+            "You are an expert coding assistant powered by GPT-5.5. \
              You have access to file operations, bash commands, and directory listing. \
              Help users analyze code, refactor projects, debug issues, and manage files. \
              Always think through problems step-by-step and use tools when appropriate.",

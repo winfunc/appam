@@ -10,7 +10,7 @@ You can either provide a bearer token explicitly or let Appam read and refresh
 credentials from its local auth cache.
 
 ```bash
-export OPENAI_CODEX_MODEL="gpt-5.4"                    # optional
+export OPENAI_CODEX_MODEL="gpt-5.5"                    # optional
 export OPENAI_CODEX_ACCESS_TOKEN="eyJ..."              # optional explicit token
 export OPENAI_CODEX_AUTH_FILE="$HOME/.appam/auth.json" # optional auth cache override
 ```
@@ -26,7 +26,7 @@ OAuth entry in `OPENAI_CODEX_AUTH_FILE` and refreshes it before expiry.
 use appam::prelude::*;
 
 let agent = Agent::quick(
-    "openai-codex/gpt-5.4",
+    "openai-codex/gpt-5.5",
     "You are a helpful coding assistant.",
     vec![],
 )?;
@@ -39,7 +39,7 @@ use appam::prelude::*;
 
 let agent = AgentBuilder::new("codex-agent")
     .provider(LlmProvider::OpenAICodex)
-    .model("gpt-5.4")
+    .model("gpt-5.5")
     .system_prompt("You are a helpful coding assistant.")
     .build()?;
 ```
@@ -64,7 +64,7 @@ use appam::prelude::*;
 
 let agent = AgentBuilder::new("codex-reasoning")
     .provider(LlmProvider::OpenAICodex)
-    .model("gpt-5.4")
+    .model("gpt-5.5")
     .system_prompt("You are a reasoning assistant.")
     .openai_reasoning(ReasoningConfig::high_effort())
     .build()?;

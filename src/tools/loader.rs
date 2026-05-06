@@ -167,6 +167,7 @@ fn resolve_builtin_rust_tool(_name: &str, _module: &str, _spec: ToolSpec) -> Opt
 ///
 /// Returns the first validation error encountered.
 pub fn validate_tool_configs(configs: &[ToolConfig], base_path: &Path) -> Result<()> {
+    #[allow(clippy::never_loop)]
     for config in configs {
         // Check schema exists and is valid
         let schema_path = if config.schema.is_absolute() {

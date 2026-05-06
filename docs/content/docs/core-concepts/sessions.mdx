@@ -69,6 +69,31 @@ agent
 
 Session continuation requires history to be enabled (see below).
 
+## Transcript Replacement
+
+Advanced integrations can continue a persisted session with a caller-supplied
+message list instead of blindly appending a new user message. This is useful
+for prompt hot reload or harness activation flows where the stored system
+message must be replaced before the next turn:
+
+```rust
+use appam::agent::continue_session_with_messages;
+
+let rewritten_messages = vec![
+    // Replacement transcript goes here
+];
+
+let continued = continue_session_with_messages(
+    &agent,
+    &session.session_id,
+    rewritten_messages,
+).await?;
+```
+
+The supplied transcript replaces the persisted `messages` for that continuation
+attempt, but Appam preserves the existing `session_id`, usage tracking, and
+history persistence behavior.
+
 ## SessionHistory
 
 `SessionHistory` is the high-level API for managing persisted sessions. It wraps a SQLite database and handles all CRUD operations.

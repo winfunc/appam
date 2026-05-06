@@ -55,11 +55,11 @@ use crate::llm::LlmProvider;
 /// max_output_tokens = 9000
 ///
 /// [openai]
-/// model = "gpt-5.4"
+/// model = "gpt-5.5"
 /// max_output_tokens = 4096
 ///
 /// [openai_codex]
-/// model = "gpt-5.4"
+/// model = "gpt-5.5"
 ///
 /// [vertex]
 /// model = "gemini-2.5-flash"
@@ -348,7 +348,7 @@ impl RateLimitConfig {
 ///
 /// ## OpenAI / Azure OpenAI
 /// - `OPENAI_API_KEY`: API key for direct OpenAI requests
-/// - `OPENAI_MODEL`: Model identifier (for example `gpt-5.4`)
+/// - `OPENAI_MODEL`: Model identifier (for example `gpt-5.5`)
 /// - `OPENAI_BASE_URL`: API base URL override
 /// - `OPENAI_ORGANIZATION`: Optional organization header
 /// - `OPENAI_PROJECT`: Optional project header
@@ -988,15 +988,15 @@ logs_dir = "/tmp/logs"
         let prev_azure_model = std::env::var("AZURE_OPENAI_MODEL").ok();
 
         std::env::set_var("OPENAI_API_KEY", "openai-test-key");
-        std::env::set_var("OPENAI_MODEL", "gpt-5.4");
+        std::env::set_var("OPENAI_MODEL", "gpt-5.5");
         std::env::set_var("OPENAI_BASE_URL", "https://example.openai.test/v1");
         std::env::set_var("OPENAI_ORGANIZATION", "org_test");
         std::env::set_var("OPENAI_PROJECT", "proj_test");
-        std::env::set_var("AZURE_OPENAI_MODEL", "azure-gpt-5.4");
+        std::env::set_var("AZURE_OPENAI_MODEL", "gpt-5.5-azure");
 
         let cfg = load_config_from_env().unwrap();
         assert!(cfg.openai.api_key.is_none());
-        assert_eq!(cfg.openai.model, "azure-gpt-5.4");
+        assert_eq!(cfg.openai.model, "gpt-5.5-azure");
         assert_eq!(cfg.openai.base_url, "https://example.openai.test/v1");
         assert_eq!(cfg.openai.organization.as_deref(), Some("org_test"));
         assert_eq!(cfg.openai.project.as_deref(), Some("proj_test"));

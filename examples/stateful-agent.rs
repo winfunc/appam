@@ -33,7 +33,7 @@ async fn greet_user(
 async fn main() -> anyhow::Result<()> {
     let agent = AgentBuilder::new("stateful-demo")
         .provider(LlmProvider::OpenAI)
-        .model("gpt-5.4")
+        .model("gpt-5.5")
         .system_prompt(
             "You are a friendly demo agent. Use the greeting tool whenever the user asks to be greeted.",
         )

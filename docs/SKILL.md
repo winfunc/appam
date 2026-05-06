@@ -202,7 +202,7 @@ fn add(input: AddInput) -> Result<AddOutput> {
 async fn main() -> Result<()> {
     let agent = AgentBuilder::new("calculator")
         .provider(LlmProvider::OpenAI)
-        .model("gpt-5.4")
+        .model("gpt-5.5")
         .system_prompt("You are a careful calculator. Use the add tool for exact arithmetic.")
         .tool(add())
         .build()?;
@@ -326,7 +326,7 @@ The current TOML agent shape is:
 ```toml
 [agent]
 name = "assistant"
-model = "openai/gpt-5.4"
+model = "openai/gpt-5.5"
 system_prompt = "prompt.txt"
 description = "A helpful assistant"
 

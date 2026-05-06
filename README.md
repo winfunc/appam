@@ -140,8 +140,8 @@ Examples of model strings Appam recognizes:
 | Model string | Provider |
 | --- | --- |
 | `anthropic/claude-sonnet-4-5` | Anthropic |
-| `openai/gpt-5.4` | OpenAI |
-| `openai-codex/gpt-5.4` | OpenAI Codex |
+| `openai/gpt-5.5` | OpenAI |
+| `openai-codex/gpt-5.5` | OpenAI Codex |
 | `openrouter/anthropic/claude-sonnet-4-5` | OpenRouter Responses |
 | `vertex/gemini-2.5-flash` | Vertex |
 | `gemini-2.5-pro` | Vertex |
@@ -231,7 +231,7 @@ Best for:
 This is the ergonomic middle ground. It returns an `AgentBuilder` with provider detection already applied.
 
 ```rust
-let agent = Agent::new("assistant", "openai/gpt-5.4")
+let agent = Agent::new("assistant", "openai/gpt-5.5")
     .prompt("You are a helpful assistant.")
     .tool(add()) // Reuse any Tool generated with #[tool]
     .build()?;
@@ -326,7 +326,7 @@ Enable built-in traces on the agent when you want replayable, inspectable runs:
 ```rust
 use appam::prelude::*;
 
-let agent = Agent::new("audited-agent", "openai/gpt-5.4")
+let agent = Agent::new("audited-agent", "openai/gpt-5.5")
     .prompt("You are a careful assistant.")
     .enable_traces()
     .trace_format(TraceFormat::Detailed)

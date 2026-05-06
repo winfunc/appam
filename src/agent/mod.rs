@@ -428,5 +428,6 @@ pub struct Session {
 }
 
 pub use builder::{AgentBuilder, ReasoningProvider};
+pub use runtime::{continue_session_streaming_with_messages, continue_session_with_messages};
 pub use runtime_agent::RuntimeAgent;
 pub use toml_agent::TomlAgent;

@@ -535,7 +535,7 @@ impl OpenAIClient {
             stream: Some(self.config.stream),
 
             max_output_tokens: self.config.max_output_tokens,
-            // GPT-5.4 only accepts sampling parameters in `reasoning.effort = "none"`.
+            // GPT-5.5 only accepts sampling parameters in `reasoning.effort = "none"`.
             temperature: sampling_supported
                 .then_some(self.config.temperature)
                 .flatten(),
@@ -1381,9 +1381,9 @@ mod tests {
     }
 
     #[test]
-    fn test_build_request_body_normalizes_gpt54_and_preserves_sampling_none_mode() {
+    fn test_build_request_body_normalizes_gpt55_and_preserves_sampling_none_mode() {
         let client = build_test_client(OpenAIConfig {
-            model: "openai/gpt-5.4".to_string(),
+            model: "openai/gpt-5.5".to_string(),
             reasoning: Some(ReasoningConfig::no_reasoning()),
             temperature: Some(0.7),
             top_p: Some(0.9),
@@ -1399,7 +1399,7 @@ mod tests {
             .build_request_body(&[UnifiedMessage::user("hello")], &[])
             .expect("request body should build");
 
-        assert_eq!(request.model, "gpt-5.4");
+        assert_eq!(request.model, "gpt-5.5");
         assert_eq!(request.temperature, Some(0.7));
         assert_eq!(request.top_p, Some(0.9));
         assert_eq!(request.top_logprobs, Some(4));
@@ -1571,7 +1571,7 @@ mod tests {
             id: "resp_recorded".to_string(),
             created_at: 0.0,
             object: "response".to_string(),
-            model: "gpt-5.4".to_string(),
+            model: "gpt-5.5".to_string(),
             status: ResponseStatus::Completed,
             output: vec![],
             instructions: None,

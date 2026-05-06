@@ -1,4 +1,4 @@
-//! TUI Coding Agent using an OpenAI Codex subscription with GPT-5.4
+//! TUI Coding Agent using an OpenAI Codex subscription with GPT-5.5
 //!
 //! A minimal terminal interface coding assistant with:
 //! - Multi-turn conversation loop
@@ -8,7 +8,7 @@
 //! - Interactive ChatGPT login when no cached Codex credentials exist
 //!
 //! Usage:
-//!   export OPENAI_CODEX_MODEL="gpt-5.4"                # optional
+//!   export OPENAI_CODEX_MODEL="gpt-5.5"                # optional
 //!   export OPENAI_CODEX_ACCESS_TOKEN="eyJ..."          # optional explicit token
 //!   export OPENAI_CODEX_AUTH_FILE="$HOME/.appam/auth.json"  # optional auth cache override
 //!   cargo run --example coding-agent-openai-codex
@@ -245,7 +245,7 @@ async fn resolve_or_login_codex_access_token() -> Result<(String, String)> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let model = std::env::var("OPENAI_CODEX_MODEL").unwrap_or_else(|_| "gpt-5.4".to_string());
+    let model = std::env::var("OPENAI_CODEX_MODEL").unwrap_or_else(|_| "gpt-5.5".to_string());
     let (access_token, auth_source) = resolve_or_login_codex_access_token().await?;
 
     println!("🚀 Coding Agent - GPT via OpenAI Codex Subscription\n");

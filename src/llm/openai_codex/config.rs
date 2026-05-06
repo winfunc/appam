@@ -44,7 +44,7 @@ pub struct OpenAICodexConfig {
 
     /// Model identifier to send to the Codex backend.
     ///
-    /// Examples include `gpt-5.4`, `gpt-5.3-codex`, and `gpt-5.2-codex`.
+    /// Examples include `gpt-5.5`, `gpt-5.3-codex`, and `gpt-5.2-codex`.
     #[serde(default = "OpenAICodexConfig::default_model")]
     pub model: String,
 
@@ -107,7 +107,7 @@ impl OpenAICodexConfig {
     }
 
     fn default_model() -> String {
-        "gpt-5.4".to_string()
+        "gpt-5.5".to_string()
     }
 
     fn default_stream() -> bool {
@@ -226,7 +226,7 @@ pub fn resolve_reasoning_effort_for_codex_model(
         model
             if (model.starts_with("gpt-5.2")
                 || model.starts_with("gpt-5.3")
-                || model.starts_with("gpt-5.4"))
+                || model.starts_with("gpt-5.5"))
                 && selected == ReasoningEffort::Minimal =>
         {
             ReasoningEffort::Low
@@ -248,7 +248,7 @@ mod tests {
     fn test_default_config() {
         let config = OpenAICodexConfig::default();
         assert_eq!(config.base_url, "https://chatgpt.com/backend-api");
-        assert_eq!(config.model, "gpt-5.4");
+        assert_eq!(config.model, "gpt-5.5");
         assert_eq!(config.max_output_tokens, Some(4096));
         assert!(config.stream);
     }
@@ -271,7 +271,7 @@ mod tests {
     #[test]
     fn test_validate_rejects_reasoning_summary_for_none_mode() {
         let config = OpenAICodexConfig {
-            model: "gpt-5.4".to_string(),
+            model: "gpt-5.5".to_string(),
             reasoning: Some(ReasoningConfig {
                 effort: Some(ReasoningEffort::None),
                 summary: Some(crate::llm::openai::ReasoningSummary::Detailed),
@@ -285,7 +285,7 @@ mod tests {
     #[test]
     fn test_validate_allows_sampling_with_none_reasoning() {
         let config = OpenAICodexConfig {
-            model: "gpt-5.4".to_string(),
+            model: "gpt-5.5".to_string(),
             reasoning: Some(ReasoningConfig::no_reasoning()),
             temperature: Some(0.5),
             top_p: Some(0.9),
@@ -298,7 +298,7 @@ mod tests {
     #[test]
     fn test_validate_rejects_sampling_with_high_reasoning() {
         let config = OpenAICodexConfig {
-            model: "gpt-5.4".to_string(),
+            model: "gpt-5.5".to_string(),
             reasoning: Some(ReasoningConfig::high_effort()),
             temperature: Some(0.5),
             ..Default::default()
@@ -310,7 +310,7 @@ mod tests {
     #[test]
     fn test_resolve_reasoning_effort_clamps_codex_specific_models() {
         assert_eq!(
-            resolve_reasoning_effort_for_codex_model("gpt-5.4", Some(ReasoningEffort::Minimal)),
+            resolve_reasoning_effort_for_codex_model("gpt-5.5", Some(ReasoningEffort::Minimal)),
             ReasoningEffort::Low
         );
         assert_eq!(

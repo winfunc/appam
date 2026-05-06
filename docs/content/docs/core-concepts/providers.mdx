@@ -96,7 +96,7 @@ let agent = Agent::quick("anthropic/claude-sonnet-4-5", "prompt", vec![])?;
 let agent = Agent::quick("openai/gpt-4o", "prompt", vec![])?;
 
 // OpenAI Codex (prefix: "openai-codex/")
-let codex = Agent::quick("openai-codex/gpt-5.4", "prompt", vec![])?;
+let codex = Agent::quick("openai-codex/gpt-5.5", "prompt", vec![])?;
 
 // Vertex (prefix: "vertex/", "gemini-", or "google/gemini")
 let agent = Agent::quick("vertex/gemini-2.5-flash", "prompt", vec![])?;
@@ -163,7 +163,7 @@ export OPENAI_API_KEY="sk-..."
 ### OpenAI Codex
 
 ```bash
-export OPENAI_CODEX_MODEL="gpt-5.4"                    # optional
+export OPENAI_CODEX_MODEL="gpt-5.5"                    # optional
 export OPENAI_CODEX_ACCESS_TOKEN="eyJ..."              # optional explicit token
 export OPENAI_CODEX_AUTH_FILE="$HOME/.appam/auth.json" # optional auth cache override
 ```

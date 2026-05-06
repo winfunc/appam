@@ -1,4 +1,4 @@
-//! TUI Coding Agent using Azure OpenAI with GPT-5.4
+//! TUI Coding Agent using Azure OpenAI with GPT-5.5
 //!
 //! A minimal terminal interface coding assistant with:
 //! - Multi-turn conversation loop
@@ -10,7 +10,7 @@
 //!
 //! Azure OpenAI requires:
 //! 1. An Azure OpenAI resource (creates a unique endpoint)
-//! 2. A deployed model (for example `gpt-5.4`, `gpt-4o`, or `o3`)
+//! 2. A deployed model (for example `gpt-5.5-azure`, `gpt-4o`, or `o3`)
 //! 3. An API key from your Azure portal
 //!
 //! # Environment Variables
@@ -21,14 +21,14 @@
 //!
 //! **Optional:**
 //! - `AZURE_OPENAI_API_VERSION` - API version (default: "2025-04-01-preview")
-//! - `AZURE_OPENAI_MODEL` - Deployed model name (default: "gpt-5.4")
+//! - `AZURE_OPENAI_MODEL` - Deployed model name (default: "gpt-5.5-azure")
 //!
 //! # Usage
 //!
 //! ```bash
 //! export AZURE_OPENAI_API_KEY="your-api-key"
 //! export AZURE_OPENAI_RESOURCE="your-resource-name"
-//! export AZURE_OPENAI_MODEL="gpt-5.4"  # optional
+//! export AZURE_OPENAI_MODEL="gpt-5.5-azure"  # optional
 //! cargo run --example coding-agent-azure-openai
 //! ```
 //!
@@ -236,7 +236,7 @@ async fn main() -> Result<()> {
         .context("AZURE_OPENAI_RESOURCE environment variable is required. Set it to your Azure OpenAI resource name.")?;
     let api_version = std::env::var("AZURE_OPENAI_API_VERSION")
         .unwrap_or_else(|_| "2025-04-01-preview".to_string());
-    let model = std::env::var("AZURE_OPENAI_MODEL").unwrap_or_else(|_| "gpt-5.4".to_string());
+    let model = std::env::var("AZURE_OPENAI_MODEL").unwrap_or_else(|_| "gpt-5.5-azure".to_string());
 
     // Check for API key
     if std::env::var("AZURE_OPENAI_API_KEY").is_err() && std::env::var("OPENAI_API_KEY").is_err() {

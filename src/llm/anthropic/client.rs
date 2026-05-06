@@ -474,8 +474,15 @@ impl AnthropicClient {
             );
 
             // Beta features (only for direct Anthropic API)
-            if self.config.beta_features.has_any() {
-                let beta_values = self.config.beta_features.to_header_values();
+            if self
+                .config
+                .beta_features
+                .has_any_for_model(&self.config.model)
+            {
+                let beta_values = self
+                    .config
+                    .beta_features
+                    .to_header_values_for_model(Some(&self.config.model));
                 let beta_header = beta_values.join(",");
                 headers.insert(
                     "anthropic-beta",
@@ -779,8 +786,16 @@ impl AnthropicClient {
         }
 
         // Add Bedrock beta features in the request body (not HTTP headers)
-        if self.is_bedrock() && self.config.beta_features.has_any() {
-            let beta_values = self.config.beta_features.to_header_values();
+        if self.is_bedrock()
+            && self
+                .config
+                .beta_features
+                .has_any_for_model(&self.config.model)
+        {
+            let beta_values = self
+                .config
+                .beta_features
+                .to_header_values_for_model(Some(&self.config.model));
             body["anthropic_beta"] = json!(beta_values);
         }
 
@@ -2401,7 +2416,7 @@ mod tests {
 
         let client = AnthropicClient::new(AnthropicConfig {
             azure: Some(super::super::config::AzureAnthropicConfig {
-                base_url: "https://example-resource.openai.azure.com/anthropic".to_string(),
+                base_url: "https://example-resource.services.ai.azure.com/anthropic".to_string(),
                 auth_method: AzureAnthropicAuthMethod::BearerToken,
             }),
             ..Default::default()

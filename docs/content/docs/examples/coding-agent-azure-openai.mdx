@@ -12,7 +12,7 @@ export AZURE_OPENAI_RESOURCE="your-resource-name"
 export AZURE_OPENAI_API_KEY="your-api-key"
 # or export OPENAI_API_KEY="your-api-key"
 export AZURE_OPENAI_API_VERSION="2025-04-01-preview"
-export AZURE_OPENAI_MODEL="gpt-5.4"
+export AZURE_OPENAI_MODEL="gpt-5.5-azure"
 
 cargo run --example coding-agent-azure-openai
 ```
@@ -22,7 +22,7 @@ cargo run --example coding-agent-azure-openai
 - `AZURE_OPENAI_RESOURCE` is required.
 - `AZURE_OPENAI_API_KEY` is preferred, and `OPENAI_API_KEY` is accepted as a fallback.
 - `AZURE_OPENAI_API_VERSION` defaults to `2025-04-01-preview`.
-- `AZURE_OPENAI_MODEL` defaults to `gpt-5.4`.
+- `AZURE_OPENAI_MODEL` defaults to `gpt-5.5-azure`.
 
 The example constructs Azure Responses API URLs in the form:
 

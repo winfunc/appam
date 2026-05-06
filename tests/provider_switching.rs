@@ -75,13 +75,13 @@ fn test_dynamic_client_creation_azure_anthropic() {
 }
 
 #[test]
-fn test_dynamic_client_creation_openai_with_prefixed_gpt54_model() {
+fn test_dynamic_client_creation_openai_with_prefixed_gpt55_model() {
     let mut config = AppConfig {
         provider: LlmProvider::OpenAI,
         ..AppConfig::default()
     };
     config.openai.api_key = Some("test-key".to_string());
-    config.openai.model = "openai/gpt-5.4".to_string();
+    config.openai.model = "openai/gpt-5.5".to_string();
 
     let result = DynamicLlmClient::from_config(&config);
     assert!(result.is_ok());
@@ -98,7 +98,7 @@ fn test_dynamic_client_creation_openai_codex() {
         ..AppConfig::default()
     };
     config.openai_codex.access_token = Some("test-openai-codex-token".to_string());
-    config.openai_codex.model = "gpt-5.4".to_string();
+    config.openai_codex.model = "gpt-5.5".to_string();
 
     let result = DynamicLlmClient::from_config(&config);
     assert!(result.is_ok());
