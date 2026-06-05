@@ -150,22 +150,12 @@ fn message_to_input_items(msg: &UnifiedMessage) -> Vec<InputItem> {
                 tool_results.push((tool_use_id.clone(), content.clone()));
             }
             UnifiedContentBlock::Thinking {
-                thinking,
-                encrypted_content,
-                ..
+                encrypted_content, ..
             } => {
-                if msg.role == UnifiedRole::Assistant {
-                    let content = if !thinking.is_empty() {
-                        vec![ReasoningContent::ReasoningText {
-                            text: thinking.clone(),
-                        }]
-                    } else {
-                        Vec::new()
-                    };
-
+                if msg.role == UnifiedRole::Assistant && encrypted_content.is_some() {
                     reasoning_items.push(InputItem::Reasoning {
                         id: format!("rs_{}", Uuid::new_v4().simple()),
-                        content,
+                        content: Vec::new(),
                         summary: Vec::new(),
                         encrypted_content: encrypted_content.clone(),
                     });
@@ -518,7 +508,7 @@ mod tests {
     }
 
     #[test]
-    fn test_from_unified_messages_preserves_reasoning_replay_items() {
+    fn test_from_unified_messages_replays_only_encrypted_reasoning_state() {
         let input = from_unified_messages(
             &[UnifiedMessage {
                 role: UnifiedRole::Assistant,
@@ -546,15 +536,37 @@ mod tests {
                         ..
                     } => {
                         assert_eq!(encrypted_content.as_deref(), Some("enc_reasoning_blob"));
-                        assert!(matches!(
-                            content.as_slice(),
-                            [ReasoningContent::ReasoningText { text }] if text == "Step 1"
-                        ));
+                        assert!(content.is_empty());
                     }
                     _ => panic!("Expected Reasoning item"),
                 }
             }
             _ => panic!("Expected Structured variant"),
+        }
+    }
+
+    #[test]
+    fn test_from_unified_messages_drops_plain_reasoning_on_replay() {
+        let input = from_unified_messages(
+            &[UnifiedMessage {
+                role: UnifiedRole::Assistant,
+                content: vec![UnifiedContentBlock::Thinking {
+                    thinking: "Step 1".to_string(),
+                    signature: None,
+                    encrypted_content: None,
+                    redacted: false,
+                }],
+                id: Some("msg_1".to_string()),
+                timestamp: None,
+                reasoning: None,
+                reasoning_details: None,
+            }],
+            None,
+        );
+
+        match input {
+            ResponseInput::Structured(items) => assert!(items.is_empty()),
+            _ => panic!("Expected Structured input"),
         }
     }
 }

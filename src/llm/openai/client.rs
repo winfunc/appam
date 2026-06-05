@@ -670,6 +670,46 @@ impl OpenAIClient {
         )
     }
 
+    /// Detect stale Responses API continuation anchors.
+    ///
+    /// OpenAI returns a 400 with `code=previous_response_not_found` when a
+    /// request references a `previous_response_id` that is no longer available
+    /// server-side. The local transcript is still complete, so the caller can
+    /// safely retry once after clearing the continuation anchor.
+    fn is_previous_response_not_found(status: StatusCode, body: &str) -> bool {
+        if status != StatusCode::BAD_REQUEST {
+            return false;
+        }
+
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+            let normalized = body.to_ascii_lowercase();
+            return normalized.contains("previous_response_not_found")
+                || (normalized.contains("previous response")
+                    && normalized.contains("previous_response_id")
+                    && normalized.contains("not found"));
+        };
+
+        let error = value.get("error").unwrap_or(&value);
+        let code = error
+            .get("code")
+            .and_then(|code| code.as_str())
+            .unwrap_or_default();
+        let param = error
+            .get("param")
+            .and_then(|param| param.as_str())
+            .unwrap_or_default();
+        let message = error
+            .get("message")
+            .and_then(|message| message.as_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+
+        code == "previous_response_not_found"
+            || (param == "previous_response_id"
+                && message.contains("previous response")
+                && message.contains("not found"))
+    }
+
     /// Determine whether a reqwest error indicates a transient network failure.
     ///
     /// Retries on:
@@ -1216,8 +1256,8 @@ impl LlmClient for OpenAIClient {
             .expect("latest response id mutex poisoned") = None;
         self.clear_last_failed_exchange();
 
-        let request_body = self.build_request_body(messages, tools)?;
-        let request_payload = serde_json::to_string_pretty(&request_body)?;
+        let mut request_body = self.build_request_body(messages, tools)?;
+        let mut request_payload = serde_json::to_string_pretty(&request_body)?;
 
         // Debug: Log request body to verify tool schemas
         debug!(
@@ -1235,6 +1275,7 @@ impl LlmClient for OpenAIClient {
         let mut on_reasoning = on_reasoning;
         let mut on_tool_calls_partial = on_tool_calls_partial;
         let mut on_content_block_complete = on_content_block_complete;
+        let mut recovered_stale_previous_response = false;
 
         loop {
             attempt += 1;
@@ -1294,6 +1335,22 @@ impl LlmClient for OpenAIClient {
                 let status = response.status();
                 let response_headers = response.headers().clone();
                 let body = response.text().await.unwrap_or_default();
+
+                if !recovered_stale_previous_response
+                    && request_body.previous_response_id.is_some()
+                    && Self::is_previous_response_not_found(status, &body)
+                {
+                    recovered_stale_previous_response = true;
+                    self.set_previous_response_id(None);
+                    request_body = self.build_request_body(messages, tools)?;
+                    request_payload = serde_json::to_string_pretty(&request_body)?;
+                    warn!(
+                        attempt = attempt,
+                        status = %status,
+                        "OpenAI previous_response_id was stale; retrying with full transcript"
+                    );
+                    continue;
+                }
 
                 if attempt < max_attempts && Self::should_retry_status(status) {
                     let retry_after = Self::retry_after_from_headers(&response_headers);
@@ -1641,6 +1698,31 @@ mod tests {
         assert!(!OpenAIClient::should_retry_status(StatusCode::UNAUTHORIZED));
         assert!(!OpenAIClient::should_retry_status(StatusCode::FORBIDDEN));
         assert!(!OpenAIClient::should_retry_status(StatusCode::NOT_FOUND));
+    }
+
+    #[test]
+    fn test_previous_response_not_found_is_recoverable_stale_anchor() {
+        let body = r#"{
+            "error": {
+                "message": "Previous response with id 'resp_old' not found.",
+                "type": "invalid_request_error",
+                "param": "previous_response_id",
+                "code": "previous_response_not_found"
+            }
+        }"#;
+
+        assert!(OpenAIClient::is_previous_response_not_found(
+            StatusCode::BAD_REQUEST,
+            body
+        ));
+        assert!(!OpenAIClient::is_previous_response_not_found(
+            StatusCode::BAD_REQUEST,
+            r#"{"error":{"code":"invalid_api_key"}}"#
+        ));
+        assert!(!OpenAIClient::is_previous_response_not_found(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            body
+        ));
     }
 
     #[test]
