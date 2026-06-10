@@ -66,9 +66,9 @@ static PRICING: Lazy<PricingStore> = Lazy::new(PricingStore::initialize);
 /// # Design Notes
 ///
 /// Appam keeps flat fields (`input`, `output`, `cache_*`, `reasoning`) for
-/// simple models and maps models.dev's extended-context pricing into the
-/// existing `*_base` / `*_extended` fields. This avoids a breaking API change
-/// while still letting the runtime represent tiered pricing from upstream.
+/// simple models and maps models.dev's context-tier pricing into the existing
+/// `*_base` / `*_extended` fields. This avoids a breaking API change while
+/// still letting the runtime represent tiered pricing from upstream.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModelPricing {
     /// Human-readable model name.
@@ -510,20 +510,16 @@ impl PricingStore {
             threshold_tokens: None,
         };
 
-        if let Some(tiered) = model
-            .cost
-            .as_ref()
-            .and_then(|cost| cost.context_over_200k.as_ref())
-        {
+        if let Some(tiered) = model.cost.as_ref().and_then(select_context_tier) {
             pricing.input_base = pricing.input;
-            pricing.input_extended = tiered.input;
+            pricing.input_extended = tiered.rates.input;
             pricing.output_base = pricing.output;
-            pricing.output_extended = tiered.output;
+            pricing.output_extended = tiered.rates.output;
             pricing.cache_write_base = pricing.cache_write;
-            pricing.cache_write_extended = tiered.cache_write;
+            pricing.cache_write_extended = tiered.rates.cache_write;
             pricing.cache_read_base = pricing.cache_read;
-            pricing.cache_read_extended = tiered.cache_read;
-            pricing.threshold_tokens = Some(TIER_THRESHOLD_TOKENS);
+            pricing.cache_read_extended = tiered.rates.cache_read;
+            pricing.threshold_tokens = Some(tiered.threshold_tokens);
         }
 
         pricing
@@ -609,6 +605,8 @@ struct ModelsDevCostPayload {
     cache_write: Option<f64>,
     #[serde(default)]
     context_over_200k: Option<ModelsDevContextCostPayload>,
+    #[serde(default)]
+    tiers: Vec<ModelsDevTierCostPayload>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -621,6 +619,58 @@ struct ModelsDevContextCostPayload {
     cache_read: Option<f64>,
     #[serde(default)]
     cache_write: Option<f64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ModelsDevTierCostPayload {
+    #[serde(flatten)]
+    rates: ModelsDevContextCostPayload,
+    tier: ModelsDevTierPayload,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ModelsDevTierPayload {
+    #[serde(rename = "type")]
+    kind: String,
+    size: Option<u32>,
+}
+
+struct SelectedContextTier<'a> {
+    rates: &'a ModelsDevContextCostPayload,
+    threshold_tokens: u32,
+}
+
+/// Select the context-length tier that should replace the legacy 200K
+/// threshold fallback.
+///
+/// Models.dev now exposes structured `cost.tiers` entries with explicit
+/// context sizes. Appam supports one base/extended context tier today, so the
+/// lowest valid context tier is selected when multiple tiers are present. Older
+/// payloads that only expose `context_over_200k` still use the legacy 200K
+/// threshold to preserve offline compatibility with existing seed files.
+fn select_context_tier(cost: &ModelsDevCostPayload) -> Option<SelectedContextTier<'_>> {
+    cost.tiers
+        .iter()
+        .filter(|tier| tier.tier.kind == "context")
+        .filter_map(|tier| {
+            tier.tier
+                .size
+                .filter(|size| *size > 0)
+                .map(|size| (size, tier))
+        })
+        .min_by_key(|(size, _tier)| *size)
+        .map(|(threshold_tokens, tier)| SelectedContextTier {
+            rates: &tier.rates,
+            threshold_tokens,
+        })
+        .or_else(|| {
+            cost.context_over_200k
+                .as_ref()
+                .map(|rates| SelectedContextTier {
+                    rates,
+                    threshold_tokens: TIER_THRESHOLD_TOKENS,
+                })
+        })
 }
 
 fn default_pricing() -> ModelPricing {
@@ -874,7 +924,8 @@ pub fn calculate_cost(usage: &UnifiedUsage, provider: &str, model: &str) -> f64 
 
 /// Calculate cost for tiered pricing models.
 ///
-/// Models.dev expresses extended-context pricing under `cost.context_over_200k`.
+/// Models.dev expresses extended-context pricing under structured `cost.tiers`
+/// entries and, for older payloads, the legacy `cost.context_over_200k` field.
 /// Appam maps that into the existing tiered fields and then selects the tier
 /// using the total prompt size, including cache hits. If an extended rate is
 /// absent for a specific field, the base rate is reused instead of silently
@@ -1070,8 +1121,8 @@ mod tests {
             cache_path,
             cache_enabled: true,
             sync_enabled: true,
-            connect_timeout: Duration::from_millis(250),
-            request_timeout: Duration::from_secs(1),
+            connect_timeout: Duration::from_secs(2),
+            request_timeout: Duration::from_secs(5),
         }
     }
 
@@ -1237,6 +1288,40 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_gpt_55_uses_models_dev_context_tier_boundary() {
+        let pricing = get_model_pricing("openai", "gpt-5.5");
+        assert_eq!(pricing.threshold_tokens, Some(272_000));
+        assert_eq!(pricing.input_base, Some(5.0));
+        assert_eq!(pricing.input_extended, Some(10.0));
+        assert_eq!(pricing.output_base, Some(30.0));
+        assert_eq!(pricing.output_extended, Some(45.0));
+
+        let short_context_usage = UnifiedUsage {
+            input_tokens: 250_000,
+            output_tokens: 10_000,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
+            reasoning_tokens: None,
+        };
+        let long_context_usage = UnifiedUsage {
+            input_tokens: 280_000,
+            output_tokens: 10_000,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
+            reasoning_tokens: None,
+        };
+
+        assert_nearly_equal(
+            calculate_cost(&short_context_usage, "openai", "gpt-5.5"),
+            1.55,
+        );
+        assert_nearly_equal(
+            calculate_cost(&long_context_usage, "openai", "gpt-5.5"),
+            3.25,
+        );
     }
 
     #[test]
