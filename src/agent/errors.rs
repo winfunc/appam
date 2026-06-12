@@ -35,6 +35,19 @@ pub enum SessionFailureKind {
     /// The model exhausted continuation attempts without calling a required
     /// completion tool.
     RequiredCompletionToolMissing,
+    /// The model repeated the same tool name and arguments after that exact
+    /// call already failed in the current session.
+    DeterministicToolArgumentFailure,
+    /// The provider rejected a continuation because the transcript was missing
+    /// a required tool output.
+    MissingToolOutput,
+    /// The provider rejected a continuation because the previous response
+    /// anchor was no longer available server-side.
+    StalePreviousResponseId,
+    /// The provider returned a token or request rate-limit response.
+    ProviderTokenRateLimit,
+    /// The provider failed with a transient transport, stream, or 5xx error.
+    ProviderTransport,
 }
 
 impl fmt::Display for SessionFailureKind {
@@ -44,6 +57,13 @@ impl fmt::Display for SessionFailureKind {
             Self::RequiredCompletionToolMissing => {
                 write!(f, "required_completion_tool_missing")
             }
+            Self::DeterministicToolArgumentFailure => {
+                write!(f, "deterministic_tool_argument_failure")
+            }
+            Self::MissingToolOutput => write!(f, "missing_tool_output"),
+            Self::StalePreviousResponseId => write!(f, "stale_previous_response_id"),
+            Self::ProviderTokenRateLimit => write!(f, "provider_token_rate_limit"),
+            Self::ProviderTransport => write!(f, "provider_transport"),
         }
     }
 }

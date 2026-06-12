@@ -515,6 +515,50 @@ async fn run_tool_call<A: Agent + ?Sized>(
     }
 }
 
+/// Return whether the same tool call arguments already failed in this session.
+///
+/// Tool failures are surfaced back to the model so it can repair malformed
+/// arguments. If the model repeats the same tool name and exact JSON arguments
+/// after a failed execution, another provider turn cannot change the outcome.
+/// The runtime therefore fails closed instead of spending more model budget on
+/// an unchanged deterministic error.
+fn repeated_failed_tool_arguments(
+    messages: &[ChatMessage],
+    tool_name: &str,
+    arguments: &str,
+) -> bool {
+    messages.iter().any(|message| {
+        message.tool_metadata.as_ref().is_some_and(|metadata| {
+            !metadata.success && metadata.tool_name == tool_name && metadata.arguments == arguments
+        })
+    })
+}
+
+fn emit_deterministic_tool_argument_failure(
+    multi_consumer: &MultiConsumer,
+    agent_name: &str,
+    tool_name: &str,
+) -> Result<bool> {
+    let error = SessionFailureError::new(
+        SessionFailureKind::DeterministicToolArgumentFailure,
+        format!(
+            "Agent '{}' repeated unchanged failing arguments for tool '{}'",
+            agent_name, tool_name
+        ),
+    );
+    multi_consumer.on_event(&StreamEvent::Error {
+        message: error.to_string(),
+        failure_kind: Some(SessionFailureKind::DeterministicToolArgumentFailure),
+        provider: None,
+        model: None,
+        http_status: None,
+        request_payload: None,
+        response_payload: None,
+        provider_response_id: None,
+    })?;
+    Err(anyhow::Error::new(error))
+}
+
 async fn execute_pending_tool_calls<A: Agent + ?Sized>(
     agent: &A,
     session_id: &str,
@@ -526,6 +570,25 @@ async fn execute_pending_tool_calls<A: Agent + ?Sized>(
     let required_completion_tools = agent.required_completion_tools().cloned();
     let prepared_calls =
         prepare_tool_calls(pending_tool_calls, multi_consumer, emitted_tool_calls)?;
+
+    for prepared in &prepared_calls {
+        if repeated_failed_tool_arguments(
+            messages,
+            &prepared.call.function.name,
+            &prepared.call.function.arguments,
+        ) {
+            warn!(
+                agent = agent.name(),
+                tool = %prepared.call.function.name,
+                "Failing session after repeated deterministic tool argument failure"
+            );
+            return emit_deterministic_tool_argument_failure(
+                multi_consumer,
+                agent.name(),
+                &prepared.call.function.name,
+            );
+        }
+    }
 
     let should_run_parallel = agent.provider_parallel_tool_calls()
         && agent.max_concurrent_tool_executions() > 1
@@ -2246,7 +2309,7 @@ mod tests {
     use crate::config::AppConfig;
     use crate::llm::{ChatMessage, Role, ToolCall, ToolCallFunction, ToolSpec};
     use crate::tools::{AsyncTool, Tool, ToolConcurrency, ToolContext};
-    use anyhow::Result;
+    use anyhow::{anyhow, Result};
     use async_trait::async_trait;
     use serde_json::json;
     use std::sync::{Arc, Mutex};
@@ -2526,6 +2589,33 @@ mod tests {
         }
     }
 
+    struct FailingTool;
+
+    impl Tool for FailingTool {
+        fn name(&self) -> &str {
+            "fail_tool"
+        }
+
+        fn spec(&self) -> Result<ToolSpec> {
+            Ok(serde_json::from_value(json!({
+                "type": "function",
+                "name": "fail_tool",
+                "description": "Always fails",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "delay_ms": {"type": "number"}
+                    },
+                    "required": ["delay_ms"]
+                }
+            }))?)
+        }
+
+        fn execute(&self, _args: serde_json::Value) -> Result<serde_json::Value> {
+            Err(anyhow!("deterministic failure"))
+        }
+    }
+
     fn tool_call(name: &str, id: &str, delay_ms: u64) -> ToolCall {
         ToolCall {
             id: id.to_string(),
@@ -2625,5 +2715,54 @@ mod tests {
         assert!(elapsed >= Duration::from_millis(130));
         assert_eq!(messages[0].tool_call_id.as_deref(), Some("call-1"));
         assert_eq!(messages[1].tool_call_id.as_deref(), Some("call-2"));
+    }
+
+    #[tokio::test]
+    async fn execute_pending_tool_calls_fails_repeated_identical_failed_arguments() {
+        let agent = AgentBuilder::new("deterministic-tool-agent")
+            .system_prompt("test")
+            .with_tool(Arc::new(FailingTool))
+            .build()
+            .unwrap();
+
+        let mut messages = Vec::new();
+        let consumer = crate::agent::streaming::MultiConsumer::new();
+        let emitted = Arc::new(Mutex::new(std::collections::HashSet::new()));
+        let pending = vec![tool_call("fail_tool", "call-1", 1)];
+
+        execute_pending_tool_calls(
+            &agent,
+            "session-failure",
+            &pending,
+            &mut messages,
+            &consumer,
+            &emitted,
+        )
+        .await
+        .unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0]
+                .tool_metadata
+                .as_ref()
+                .map(|metadata| metadata.success),
+            Some(false)
+        );
+
+        let repeated = execute_pending_tool_calls(
+            &agent,
+            "session-failure",
+            &pending,
+            &mut messages,
+            &consumer,
+            &emitted,
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(
+            super::extract_session_failure_kind(&repeated),
+            Some(super::SessionFailureKind::DeterministicToolArgumentFailure)
+        );
     }
 }
