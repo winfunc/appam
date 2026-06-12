@@ -710,6 +710,41 @@ impl OpenAIClient {
                 && message.contains("not found"))
     }
 
+    /// Detect Responses API continuation failures caused by missing tool output.
+    ///
+    /// When `previous_response_id` is active, OpenAI validates the short delta
+    /// request against the server-side conversation. If that anchor has lost or
+    /// rejected one of the prior tool outputs, the local transcript still
+    /// contains the durable tool result messages. Clearing the anchor and
+    /// replaying the transcript once is therefore the safest recovery.
+    fn is_missing_tool_output_error(status: StatusCode, body: &str) -> bool {
+        if status != StatusCode::BAD_REQUEST {
+            return false;
+        }
+
+        let normalized_message = serde_json::from_str::<serde_json::Value>(body)
+            .ok()
+            .and_then(|value| {
+                let error = value.get("error").unwrap_or(&value);
+                error
+                    .get("message")
+                    .and_then(|message| message.as_str())
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| body.to_string())
+            .to_ascii_lowercase();
+
+        (normalized_message.contains("tool")
+            || normalized_message.contains("function_call")
+            || normalized_message.contains("call_id"))
+            && (normalized_message.contains("output")
+                || normalized_message.contains("response")
+                || normalized_message.contains("result"))
+            && (normalized_message.contains("missing")
+                || normalized_message.contains("not found")
+                || normalized_message.contains("no tool output"))
+    }
+
     /// Determine whether a reqwest error indicates a transient network failure.
     ///
     /// Retries on:
@@ -1276,6 +1311,7 @@ impl LlmClient for OpenAIClient {
         let mut on_tool_calls_partial = on_tool_calls_partial;
         let mut on_content_block_complete = on_content_block_complete;
         let mut recovered_stale_previous_response = false;
+        let mut recovered_missing_tool_output = false;
 
         loop {
             attempt += 1;
@@ -1348,6 +1384,22 @@ impl LlmClient for OpenAIClient {
                         attempt = attempt,
                         status = %status,
                         "OpenAI previous_response_id was stale; retrying with full transcript"
+                    );
+                    continue;
+                }
+
+                if !recovered_missing_tool_output
+                    && request_body.previous_response_id.is_some()
+                    && Self::is_missing_tool_output_error(status, &body)
+                {
+                    recovered_missing_tool_output = true;
+                    self.set_previous_response_id(None);
+                    request_body = self.build_request_body(messages, tools)?;
+                    request_payload = serde_json::to_string_pretty(&request_body)?;
+                    warn!(
+                        attempt = attempt,
+                        status = %status,
+                        "OpenAI continuation was missing tool output; retrying with full transcript"
                     );
                     continue;
                 }
@@ -1720,6 +1772,30 @@ mod tests {
             r#"{"error":{"code":"invalid_api_key"}}"#
         ));
         assert!(!OpenAIClient::is_previous_response_not_found(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            body
+        ));
+    }
+
+    #[test]
+    fn test_missing_tool_output_is_recoverable_continuation_error() {
+        let body = r#"{
+            "error": {
+                "message": "No tool output found for function call call_123.",
+                "type": "invalid_request_error",
+                "code": "invalid_request_error"
+            }
+        }"#;
+
+        assert!(OpenAIClient::is_missing_tool_output_error(
+            StatusCode::BAD_REQUEST,
+            body
+        ));
+        assert!(!OpenAIClient::is_missing_tool_output_error(
+            StatusCode::BAD_REQUEST,
+            r#"{"error":{"message":"Invalid API key"}}"#
+        ));
+        assert!(!OpenAIClient::is_missing_tool_output_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             body
         ));
