@@ -58,6 +58,24 @@ fn test_agent_builder_with_model() {
 }
 
 #[test]
+fn test_agent_builder_applies_openai_prompt_cache_key() {
+    let agent = AgentBuilder::new("test-agent")
+        .provider(LlmProvider::OpenAI)
+        .system_prompt("Test prompt")
+        .openai_prompt_cache_key("scan-42-bucket-3")
+        .build()
+        .unwrap();
+
+    let mut config = appam::config::AppConfig::default();
+    agent.apply_config_overrides(&mut config);
+
+    assert_eq!(
+        config.openai.prompt_cache_key.as_deref(),
+        Some("scan-42-bucket-3")
+    );
+}
+
+#[test]
 fn test_agent_builder_with_tool() {
     let agent = AgentBuilder::new("test-agent")
         .system_prompt("Test prompt")

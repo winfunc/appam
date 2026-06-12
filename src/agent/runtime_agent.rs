@@ -63,6 +63,7 @@ pub struct RuntimeAgent {
     openai_service_tier: Option<crate::llm::openai::ServiceTier>,
     openai_text_verbosity: Option<crate::llm::openai::TextVerbosity>,
     openai_pricing_model: Option<String>,
+    openai_prompt_cache_key: Option<String>,
 
     // Anthropic-specific overrides
     anthropic_pricing_model: Option<String>,
@@ -154,6 +155,7 @@ impl RuntimeAgent {
             openai_service_tier: None,
             openai_text_verbosity: None,
             openai_pricing_model: None,
+            openai_prompt_cache_key: None,
             anthropic_pricing_model: None,
             thinking: None,
             caching: None,
@@ -205,6 +207,7 @@ impl RuntimeAgent {
         openai_service_tier: Option<crate::llm::openai::ServiceTier>,
         openai_text_verbosity: Option<crate::llm::openai::TextVerbosity>,
         openai_pricing_model: Option<String>,
+        openai_prompt_cache_key: Option<String>,
         anthropic_pricing_model: Option<String>,
         thinking: Option<crate::llm::anthropic::ThinkingConfig>,
         caching: Option<crate::llm::anthropic::CachingConfig>,
@@ -250,6 +253,7 @@ impl RuntimeAgent {
             openai_service_tier,
             openai_text_verbosity,
             openai_pricing_model,
+            openai_prompt_cache_key,
             anthropic_pricing_model,
             thinking,
             caching,
@@ -452,6 +456,9 @@ impl Agent for RuntimeAgent {
         if let Some(ref pricing_model) = self.openai_pricing_model {
             cfg.openai.pricing_model = Some(pricing_model.clone());
             cfg.openai_codex.pricing_model = Some(pricing_model.clone());
+        }
+        if let Some(ref prompt_cache_key) = self.openai_prompt_cache_key {
+            cfg.openai.prompt_cache_key = Some(prompt_cache_key.clone());
         }
         if let Some(ref pricing_model) = self.anthropic_pricing_model {
             cfg.anthropic.pricing_model = Some(pricing_model.clone());

@@ -134,6 +134,7 @@ pub struct AgentBuilder {
     openai_service_tier: Option<crate::llm::openai::ServiceTier>,
     openai_text_verbosity: Option<crate::llm::openai::TextVerbosity>,
     openai_pricing_model: Option<String>,
+    openai_prompt_cache_key: Option<String>,
 
     // Shared LLM parameters
     max_tokens: Option<u32>,
@@ -193,6 +194,7 @@ impl AgentBuilder {
             openai_service_tier: None,
             openai_text_verbosity: None,
             openai_pricing_model: None,
+            openai_prompt_cache_key: None,
             anthropic_pricing_model: None,
             thinking: None,
             caching: None,
@@ -631,6 +633,30 @@ impl AgentBuilder {
     /// Set the canonical OpenAI model identifier used for pricing/accounting.
     pub fn openai_pricing_model(mut self, model: impl Into<String>) -> Self {
         self.openai_pricing_model = Some(model.into());
+        self
+    }
+
+    /// Set the OpenAI prompt cache routing key for this agent.
+    ///
+    /// OpenAI combines this value with the prompt prefix hash when routing
+    /// requests to inference workers. Use it only for stable, non-sensitive
+    /// grouping identifiers that are shared by requests with the same large
+    /// static prefix; avoid embedding raw user IDs, file paths, prompts, or
+    /// secrets.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use appam::agent::AgentBuilder;
+    /// # use appam::llm::LlmProvider;
+    /// let agent = AgentBuilder::new("scanner")
+    ///     .provider(LlmProvider::OpenAI)
+    ///     .openai_prompt_cache_key("scan-42-bucket-3")
+    ///     .build()?;
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn openai_prompt_cache_key(mut self, key: impl Into<String>) -> Self {
+        self.openai_prompt_cache_key = Some(key.into());
         self
     }
 
@@ -1444,6 +1470,7 @@ impl AgentBuilder {
             self.openai_service_tier,
             self.openai_text_verbosity,
             self.openai_pricing_model,
+            self.openai_prompt_cache_key,
             self.anthropic_pricing_model,
             self.thinking,
             self.caching,
