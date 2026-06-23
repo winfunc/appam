@@ -247,20 +247,28 @@ pub struct ErrorResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Usage {
     /// Number of prompt/input tokens
+    #[serde(alias = "input_tokens")]
     pub prompt_tokens: u32,
 
     /// Number of completion/output tokens
+    #[serde(alias = "output_tokens")]
     pub completion_tokens: u32,
 
     /// Total tokens (prompt + completion)
     pub total_tokens: u32,
 
     /// Detailed prompt token breakdown
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        alias = "input_tokens_details",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub prompt_tokens_details: Option<PromptTokensDetails>,
 
     /// Detailed completion token breakdown
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        alias = "output_tokens_details",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub completion_tokens_details: Option<CompletionTokensDetails>,
 
     /// Cost in credits (OpenRouter-specific)
@@ -334,6 +342,60 @@ impl Usage {
                 .as_ref()
                 .map(|d| d.reasoning_tokens),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Usage;
+    use serde_json::json;
+
+    #[test]
+    fn parses_chat_completions_api_usage_field_names() {
+        let usage: Usage = serde_json::from_value(json!({
+            "prompt_tokens": 19,
+            "prompt_tokens_details": {
+                "cached_tokens": 2
+            },
+            "completion_tokens": 84,
+            "completion_tokens_details": {
+                "reasoning_tokens": 7
+            },
+            "total_tokens": 103,
+            "cost": 0.00027734
+        }))
+        .expect("OpenRouter Chat Completions usage should deserialize");
+
+        let unified = usage.to_unified();
+
+        assert_eq!(unified.input_tokens, 19);
+        assert_eq!(unified.output_tokens, 84);
+        assert_eq!(unified.cache_read_input_tokens, Some(2));
+        assert_eq!(unified.reasoning_tokens, Some(7));
+    }
+
+    #[test]
+    fn parses_responses_api_usage_field_names() {
+        let usage: Usage = serde_json::from_value(json!({
+            "input_tokens": 21,
+            "input_tokens_details": {
+                "cached_tokens": 3
+            },
+            "output_tokens": 114,
+            "output_tokens_details": {
+                "reasoning_tokens": 105
+            },
+            "total_tokens": 135,
+            "cost": 0.000531
+        }))
+        .expect("OpenRouter Responses usage should deserialize");
+
+        let unified = usage.to_unified();
+
+        assert_eq!(unified.input_tokens, 21);
+        assert_eq!(unified.output_tokens, 114);
+        assert_eq!(unified.cache_read_input_tokens, Some(3));
+        assert_eq!(unified.reasoning_tokens, Some(105));
     }
 }
 
