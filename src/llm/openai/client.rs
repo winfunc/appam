@@ -1539,6 +1539,17 @@ mod tests {
     }
 
     #[test]
+    fn test_build_request_body_disables_response_storage_by_default() {
+        let client = build_test_client(OpenAIConfig::default());
+
+        let request = client
+            .build_request_body(&[UnifiedMessage::user("hello")], &[])
+            .expect("request body should build");
+
+        assert_eq!(request.store, Some(false));
+    }
+
+    #[test]
     fn test_build_request_body_trims_replayed_history_when_continuing() {
         let client = build_test_client(OpenAIConfig {
             conversation: Some(ConversationConfig {

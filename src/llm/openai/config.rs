@@ -179,8 +179,11 @@ pub struct OpenAIConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retry: Option<RetryConfig>,
 
-    /// Store responses for later retrieval
-    #[serde(default)]
+    /// Store responses for later retrieval.
+    ///
+    /// Defaults to `false` so requests do not rely on provider-side storage
+    /// unless callers explicitly opt in through configuration.
+    #[serde(default = "OpenAIConfig::default_store")]
     pub store: Option<bool>,
 
     /// Background processing mode
@@ -222,6 +225,10 @@ impl OpenAIConfig {
 
     fn default_stream() -> bool {
         true
+    }
+
+    fn default_store() -> Option<bool> {
+        Some(false)
     }
 
     /// Validate configuration.
@@ -431,7 +438,7 @@ impl Default for OpenAIConfig {
             service_tier: None,
             conversation: None,
             retry: Some(RetryConfig::default()),
-            store: None,
+            store: Self::default_store(),
             background: None,
             metadata: None,
             prompt_cache_key: None,
@@ -1005,6 +1012,20 @@ mod tests {
         assert_eq!(config.base_url, "https://api.openai.com/v1");
         assert!(config.stream);
         assert_eq!(config.max_output_tokens, Some(4096));
+        assert_eq!(config.store, Some(false));
+    }
+
+    #[test]
+    fn test_store_defaults_to_false_when_deserializing_partial_config() {
+        let default_config: OpenAIConfig =
+            serde_json::from_value(serde_json::json!({})).expect("empty config should deserialize");
+        let opt_in_config: OpenAIConfig = serde_json::from_value(serde_json::json!({
+            "store": true
+        }))
+        .expect("explicit store config should deserialize");
+
+        assert_eq!(default_config.store, Some(false));
+        assert_eq!(opt_in_config.store, Some(true));
     }
 
     #[test]
