@@ -23,6 +23,9 @@ pub enum ReasoningEffort {
     Medium,
     /// Deep reasoning for complex problems
     High,
+    /// Extra-high reasoning effort. OpenRouter accepts this value and maps it
+    /// internally to the provider's maximum reasoning tier where supported.
+    XHigh,
 }
 
 /// Reasoning summary verbosity.
@@ -419,5 +422,23 @@ impl Default for ProviderPreferences {
             sort: None,
             max_price: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ReasoningConfig, ReasoningEffort};
+    use serde_json::json;
+
+    #[test]
+    fn reasoning_effort_xhigh_serializes_for_openrouter_exacto_models() {
+        let config = ReasoningConfig {
+            effort: Some(ReasoningEffort::XHigh),
+            ..Default::default()
+        };
+
+        let value = serde_json::to_value(config).expect("reasoning config should serialize");
+
+        assert_eq!(value["effort"], json!("xhigh"));
     }
 }
