@@ -798,6 +798,18 @@ fn looks_like_openai_model(model: &str) -> bool {
         || model.starts_with("codex-")
 }
 
+fn reasoning_tokens_are_included_in_output(provider: &str) -> bool {
+    provider.eq_ignore_ascii_case("openai")
+}
+
+fn billable_reasoning_tokens(provider: &str, reasoning_tokens: f64) -> f64 {
+    if reasoning_tokens_are_included_in_output(provider) {
+        0.0
+    } else {
+        reasoning_tokens
+    }
+}
+
 fn has_tiered_pricing(pricing: &ModelPricing) -> bool {
     pricing.threshold_tokens.is_some()
         && (pricing.input_base.is_some()
@@ -858,6 +870,9 @@ pub fn get_model_pricing(provider: &str, model: &str) -> &'static ModelPricing {
 /// cache-read rate when present. Tiered models use the total prompt size
 /// (`billable input + cache read`) to determine whether base or extended rates
 /// apply.
+/// Providers such as OpenAI report reasoning tokens as a detail of
+/// `output_tokens`; those reasoning counters are telemetry and are not billed as
+/// a second output stream.
 ///
 /// # Arguments
 ///
@@ -875,7 +890,8 @@ pub fn calculate_cost(usage: &UnifiedUsage, provider: &str, model: &str) -> f64 
     let cache_creation_tokens = usage.cache_creation_input_tokens.unwrap_or(0) as f64;
     let cache_read_tokens = usage.cache_read_input_tokens.unwrap_or(0) as f64;
     let output_tokens = usage.output_tokens as f64;
-    let reasoning_tokens = usage.reasoning_tokens.unwrap_or(0) as f64;
+    let reasoning_tokens =
+        billable_reasoning_tokens(provider, usage.reasoning_tokens.unwrap_or(0) as f64);
     let billable_input_tokens = (input_tokens - cache_read_tokens).max(0.0);
 
     if has_tiered_pricing(pricing) {
@@ -1040,12 +1056,13 @@ mod tests {
         );
     }
 
-    fn expected_cost(pricing: &ModelPricing, usage: &UnifiedUsage) -> f64 {
+    fn expected_cost(provider: &str, pricing: &ModelPricing, usage: &UnifiedUsage) -> f64 {
         let input_tokens = usage.input_tokens as f64;
         let cache_write_tokens = usage.cache_creation_input_tokens.unwrap_or(0) as f64;
         let cache_read_tokens = usage.cache_read_input_tokens.unwrap_or(0) as f64;
         let output_tokens = usage.output_tokens as f64;
-        let reasoning_tokens = usage.reasoning_tokens.unwrap_or(0) as f64;
+        let reasoning_tokens =
+            billable_reasoning_tokens(provider, usage.reasoning_tokens.unwrap_or(0) as f64);
         let billable_input_tokens = (input_tokens - cache_read_tokens).max(0.0);
 
         let tiered = has_tiered_pricing(pricing);
@@ -1277,12 +1294,12 @@ mod tests {
 
         for provider in providers {
             for (model, pricing) in pricing_for_provider(&snapshot.providers, provider) {
-                let expected_below = expected_cost(pricing, &below_threshold_usage);
+                let expected_below = expected_cost(provider, pricing, &below_threshold_usage);
                 let actual_below = calculate_cost(&below_threshold_usage, provider, model);
                 assert_nearly_equal(actual_below, expected_below);
 
                 if pricing.threshold_tokens.is_some() {
-                    let expected_above = expected_cost(pricing, &above_threshold_usage);
+                    let expected_above = expected_cost(provider, pricing, &above_threshold_usage);
                     let actual_above = calculate_cost(&above_threshold_usage, provider, model);
                     assert_nearly_equal(actual_above, expected_above);
                 }
@@ -1325,8 +1342,23 @@ mod tests {
     }
 
     #[test]
+    fn test_openai_output_tokens_already_include_reasoning_tokens() {
+        let usage = UnifiedUsage {
+            input_tokens: 300_000,
+            output_tokens: 10_000,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: Some(250_000),
+            reasoning_tokens: Some(6_000),
+        };
+
+        let cost = calculate_cost(&usage, "openai", "gpt-5.5");
+
+        assert_nearly_equal(cost, 1.20);
+    }
+
+    #[test]
     fn test_reasoning_tokens_fall_back_to_selected_output_rate_when_reasoning_price_is_missing() {
-        let cases = [("openai", "gpt-5.5"), ("vertex", "gemini-3.1-pro-preview")];
+        let cases = [("vertex", "gemini-3.1-pro-preview")];
 
         for (provider, model) in cases {
             let pricing = get_model_pricing(provider, model);
@@ -1343,7 +1375,7 @@ mod tests {
                 reasoning_tokens: Some(10_000),
             };
 
-            let expected = expected_cost(pricing, &usage);
+            let expected = expected_cost(provider, pricing, &usage);
             let actual = calculate_cost(&usage, provider, model);
             assert_nearly_equal(actual, expected);
         }
