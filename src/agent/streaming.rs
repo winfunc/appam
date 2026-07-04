@@ -114,6 +114,23 @@ pub enum StreamEvent {
         snapshot: crate::llm::usage::AggregatedUsage,
     },
 
+    /// Server-side context compaction performed by the provider.
+    ///
+    /// Emitted when the provider compacted the conversation because it
+    /// crossed the configured token threshold (see
+    /// `AgentBuilder::enable_auto_compaction`). The compacted summary is
+    /// retained in session history automatically; this event exists for
+    /// observability so traces and UIs can surface when compaction happened.
+    Compaction {
+        /// Provider that performed the compaction (e.g., "anthropic", "openai")
+        provider: String,
+        /// Human-readable summary when the provider exposes one (Anthropic).
+        /// `None` for opaque encrypted summaries (OpenAI) and failed
+        /// compaction passes.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        summary: Option<String>,
+    },
+
     /// Stream completed successfully.
     ///
     /// Terminal event indicating the agent has finished processing and no more

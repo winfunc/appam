@@ -1,0 +1,41 @@
+---
+title: Auto-Compaction (Anthropic)
+description: A scripted agent that crosses the 50K-token trigger with large tool payloads so the Anthropic API compacts the conversation server-side.
+---
+
+`examples/compaction-anthropic.rs` demonstrates `enable_auto_compaction` end to end on the direct Anthropic API: a `fetch_archive` tool returns ~16K tokens per call, the model fetches four volumes one at a time, and the API compacts the conversation into a `compaction` block mid-session. The example prints each compaction as it happens, then verifies the blocks were retained in session history and reports compaction-pass token usage.
+
+Requires a compaction-capable model (Claude Sonnet 4.6+, Opus 4.6+, or the Claude 5 family). A full run consumes roughly 200K input tokens.
+
+## Run
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+cargo run --example compaction-anthropic
+```
+
+## What this example actually configures
+
+- `LlmProvider::Anthropic` with model `claude-sonnet-4-6`
+- `enable_auto_compaction(50_000)` — the Anthropic minimum trigger
+- One local tool: `fetch_archive` (~16K tokens per volume)
+- An `on_compaction` stream hook that prints the provider and summary preview
+- A post-run report over `session.messages` and `session.usage`
+
+## Key builder setup
+
+```rust
+let agent = AgentBuilder::new("compaction-demo-anthropic")
+    .provider(LlmProvider::Anthropic)
+    .model("claude-sonnet-4-6")
+    .system_prompt(
+        "You are an expedition archivist. Fetch archive volumes with the \
+         fetch_archive tool exactly as instructed, one volume per tool call.",
+    )
+    .enable_auto_compaction(50_000)
+    .with_tool(Arc::new(fetch_archive()))
+    .max_tokens(4096)
+    .build()?;
+```
+
+See the [Context Compaction guide](/docs/guides/compaction) for how compaction works across providers.

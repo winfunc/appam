@@ -81,6 +81,21 @@ fn select_messages_for_openai_input<'a>(
     previous_response_id: Option<&str>,
 ) -> Vec<&'a UnifiedMessage> {
     if previous_response_id.is_none() {
+        // Stateless replay: when a compaction item exists, the compacted
+        // window is the canonical context. Items before the most recent
+        // compaction item are prunable per the Responses API contract, so
+        // drop the earlier transcript to keep request payloads bounded.
+        // System messages are preserved because they travel via the
+        // top-level `instructions` field, not the item stream.
+        if let Some(compaction_idx) = messages.iter().rposition(has_replayable_compaction_block) {
+            return messages
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, msg)| {
+                    (idx >= compaction_idx || msg.role == UnifiedRole::System).then_some(msg)
+                })
+                .collect();
+        }
         return messages.iter().collect();
     }
 
@@ -98,6 +113,23 @@ fn select_messages_for_openai_input<'a>(
         .collect()
 }
 
+/// Whether a message carries a compaction block that can be replayed to the
+/// OpenAI Responses API (i.e., one with an opaque `encrypted_content`).
+///
+/// Anthropic-origin compaction blocks (text summary, no encrypted payload)
+/// are not meaningful to OpenAI and never anchor pruning here.
+fn has_replayable_compaction_block(msg: &UnifiedMessage) -> bool {
+    msg.content.iter().any(|block| {
+        matches!(
+            block,
+            UnifiedContentBlock::Compaction {
+                encrypted_content: Some(_),
+                ..
+            }
+        )
+    })
+}
+
 /// Convert a single unified message to OpenAI input items.
 fn message_to_input_items(msg: &UnifiedMessage) -> Vec<InputItem> {
     let mut items = Vec::new();
@@ -113,6 +145,7 @@ fn message_to_input_items(msg: &UnifiedMessage) -> Vec<InputItem> {
     let mut tool_calls = Vec::new();
     let mut tool_results = Vec::new();
     let mut reasoning_items = Vec::new();
+    let mut compaction_items = Vec::new();
 
     for block in &msg.content {
         match block {
@@ -161,9 +194,26 @@ fn message_to_input_items(msg: &UnifiedMessage) -> Vec<InputItem> {
                     });
                 }
             }
+            UnifiedContentBlock::Compaction {
+                encrypted_content: Some(encrypted_content),
+                id,
+                ..
+            } => {
+                // Replay the encrypted compaction summary so the server can
+                // resume from the compacted context. Anthropic-origin blocks
+                // (no encrypted payload) are skipped by the `Some` guard.
+                compaction_items.push(InputItem::Compaction {
+                    encrypted_content: encrypted_content.clone(),
+                    id: id.clone(),
+                });
+            }
             _ => {}
         }
     }
+
+    // Compaction items come first: they represent the compacted state that
+    // the rest of this message's items were generated from.
+    items.extend(compaction_items);
 
     // Add message if there's text content
     if !text_parts.is_empty() {
@@ -374,6 +424,16 @@ pub fn to_unified_content_blocks(output_items: &[OutputItem]) -> Vec<UnifiedCont
                         redacted: false,
                     });
                 }
+            }
+            OutputItem::Compaction {
+                id,
+                encrypted_content,
+            } => {
+                blocks.push(UnifiedContentBlock::Compaction {
+                    content: None,
+                    encrypted_content: encrypted_content.clone(),
+                    id: Some(id.clone()),
+                });
             }
         }
     }

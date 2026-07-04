@@ -266,6 +266,8 @@ fn test_usage_calculations() {
         cache_creation_input_tokens: Some(200),
         cache_read_input_tokens: Some(150),
         reasoning_tokens: Some(30),
+        compaction_input_tokens: None,
+        compaction_output_tokens: None,
     };
 
     assert_eq!(usage.total_tokens(), 150);

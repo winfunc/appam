@@ -217,8 +217,27 @@ impl StreamConsumer for TraceConsumer {
                         "total_cache_creation_tokens": snapshot.total_cache_creation_tokens,
                         "total_cache_read_tokens": snapshot.total_cache_read_tokens,
                         "total_reasoning_tokens": snapshot.total_reasoning_tokens,
+                        "total_compaction_input_tokens": snapshot.total_compaction_input_tokens,
+                        "total_compaction_output_tokens": snapshot.total_compaction_output_tokens,
                     }),
                 )?;
+            }
+
+            StreamEvent::Compaction { provider, summary } => {
+                let data = if self.format == TraceFormat::Detailed {
+                    json!({
+                        "provider": provider,
+                        "summary": summary,
+                    })
+                } else {
+                    // Compact: omit the potentially large summary text
+                    json!({
+                        "provider": provider,
+                        "has_summary": summary.is_some(),
+                    })
+                };
+
+                self.write_entry("compaction", data)?;
             }
 
             StreamEvent::Error {

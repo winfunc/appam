@@ -1,0 +1,43 @@
+---
+title: Auto-Compaction (Azure Anthropic)
+description: A scripted agent that crosses the 50K-token trigger so an Azure-hosted Claude deployment compacts the conversation server-side.
+---
+
+`examples/compaction-azure-anthropic.rs` demonstrates `enable_auto_compaction` end to end on Azure-hosted Anthropic endpoints. Azure Anthropic preserves the Messages wire format, so the compaction beta header (`compact-2026-01-12`) and `context_management` edit work exactly like the direct Anthropic API — appam adds both automatically when compaction is enabled.
+
+Requires a compaction-capable Claude deployment (Sonnet 4.6+, Opus 4.6+, or the Claude 5 family).
+
+## Run
+
+```bash
+export AZURE_ANTHROPIC_BASE_URL="https://my-resource.services.ai.azure.com/anthropic"
+export AZURE_ANTHROPIC_API_KEY="..."        # or AZURE_API_KEY
+export AZURE_ANTHROPIC_MODEL="claude-opus-4-6"   # deployment name, optional
+cargo run --example compaction-azure-anthropic
+```
+
+## What this example actually configures
+
+- `LlmProvider::AzureAnthropic` with `x-api-key` authentication
+- `enable_auto_compaction(50_000)` — the Anthropic minimum trigger
+- One local tool: `fetch_archive` (~16K tokens per volume)
+- An `on_compaction` stream hook that prints the summary preview
+- A post-run report over `session.messages` and `session.usage`
+
+## Key builder setup
+
+```rust
+let agent = AgentBuilder::new("compaction-demo-azure-anthropic")
+    .provider(LlmProvider::AzureAnthropic {
+        base_url: base_url.clone(),
+        auth_method: appam::llm::anthropic::AzureAnthropicAuthMethod::XApiKey,
+    })
+    .model(&model)
+    .system_prompt("You are an expedition archivist. ...")
+    .enable_auto_compaction(50_000)
+    .with_tool(Arc::new(fetch_archive()))
+    .max_tokens(4096)
+    .build()?;
+```
+
+See the [Context Compaction guide](/docs/guides/compaction) for how compaction works across providers.

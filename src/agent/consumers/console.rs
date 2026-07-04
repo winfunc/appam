@@ -190,6 +190,16 @@ impl StreamConsumer for ConsoleConsumer {
                 // Silent - usage is tracked but not displayed in console
             }
 
+            StreamEvent::Compaction { provider, .. } => {
+                self.last_was_reasoning.store(false, Ordering::Relaxed);
+                println!();
+                println!(
+                    "{}",
+                    self.color("\x1b[35m", &format!("◈ Context compacted by {}", provider))
+                );
+                io::stdout().flush()?;
+            }
+
             StreamEvent::Done => {
                 println!(); // Final newline
                 io::stdout().flush()?;

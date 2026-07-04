@@ -137,6 +137,16 @@ pub enum ContentBlockStart {
         /// Initial thinking (empty)
         thinking: String,
     },
+
+    /// Compaction block starting (beta: compact-2026-01-12).
+    ///
+    /// Emitted when server-side compaction triggered during the request. The
+    /// complete summary arrives in a single `compaction_delta`.
+    Compaction {
+        /// Initial summary content (usually absent at block start)
+        #[serde(default)]
+        content: Option<String>,
+    },
 }
 
 /// Delta update for content blocks.
@@ -171,6 +181,17 @@ pub enum Delta {
     SignatureDelta {
         /// Cryptographic signature
         signature: String,
+    },
+
+    /// Compaction summary delta (beta: compact-2026-01-12).
+    ///
+    /// Unlike text deltas, the API sends the COMPLETE summary in a single
+    /// delta rather than streaming it incrementally. `content` may be `null`
+    /// when the internal summarization step failed.
+    CompactionDelta {
+        /// Complete compaction summary content
+        #[serde(default)]
+        content: Option<String>,
     },
 }
 
@@ -234,6 +255,8 @@ pub struct AccumulatedBlock {
     pub thinking: String,
     /// Signature (for thinking blocks)
     pub signature: Option<String>,
+    /// Compaction summary content (for compaction blocks)
+    pub compaction_content: Option<String>,
 }
 
 impl AccumulatedBlock {
@@ -256,6 +279,10 @@ impl AccumulatedBlock {
             ContentBlockStart::Thinking { .. } => {
                 block.block_type = Some("thinking".to_string());
             }
+            ContentBlockStart::Compaction { content } => {
+                block.block_type = Some("compaction".to_string());
+                block.compaction_content = content.clone();
+            }
         }
 
         block
@@ -275,6 +302,16 @@ impl AccumulatedBlock {
             }
             Delta::SignatureDelta { signature } => {
                 self.signature = Some(signature.clone());
+            }
+            Delta::CompactionDelta { content } => {
+                // The API delivers the complete summary in one delta. Append
+                // defensively in case a future API version splits it.
+                if let Some(content) = content {
+                    match &mut self.compaction_content {
+                        Some(existing) => existing.push_str(content),
+                        None => self.compaction_content = Some(content.clone()),
+                    }
+                }
             }
         }
     }
@@ -309,6 +346,10 @@ impl AccumulatedBlock {
             Some("thinking") => Ok(ContentBlock::Thinking {
                 thinking: self.thinking.clone(),
                 signature: self.signature.clone().unwrap_or_default(),
+            }),
+            Some("compaction") => Ok(ContentBlock::Compaction {
+                content: self.compaction_content.clone(),
+                cache_control: None,
             }),
             _ => Ok(ContentBlock::Text {
                 text: String::new(),

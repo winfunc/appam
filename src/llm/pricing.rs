@@ -873,6 +873,9 @@ pub fn get_model_pricing(provider: &str, model: &str) -> &'static ModelPricing {
 /// Providers such as OpenAI report reasoning tokens as a detail of
 /// `output_tokens`; those reasoning counters are telemetry and are not billed as
 /// a second output stream.
+/// Server-side compaction passes (Anthropic `usage.iterations`) are excluded
+/// from the top-level usage by the provider and billed here as an additional
+/// input/output pass at the model's standard rates.
 ///
 /// # Arguments
 ///
@@ -893,6 +896,8 @@ pub fn calculate_cost(usage: &UnifiedUsage, provider: &str, model: &str) -> f64 
     let reasoning_tokens =
         billable_reasoning_tokens(provider, usage.reasoning_tokens.unwrap_or(0) as f64);
     let billable_input_tokens = (input_tokens - cache_read_tokens).max(0.0);
+    let compaction_input_tokens = usage.compaction_input_tokens.unwrap_or(0) as f64;
+    let compaction_output_tokens = usage.compaction_output_tokens.unwrap_or(0) as f64;
 
     if has_tiered_pricing(pricing) {
         return calculate_tiered_cost(
@@ -901,6 +906,10 @@ pub fn calculate_cost(usage: &UnifiedUsage, provider: &str, model: &str) -> f64 
             cache_creation_tokens,
             cache_read_tokens,
             reasoning_tokens,
+            pricing,
+        ) + calculate_tiered_compaction_cost(
+            compaction_input_tokens,
+            compaction_output_tokens,
             pricing,
         );
     }
@@ -932,6 +941,60 @@ pub fn calculate_cost(usage: &UnifiedUsage, provider: &str, model: &str) -> f64 
     if reasoning_tokens > 0.0 {
         if let Some(reasoning_rate) = pricing.reasoning.or(pricing.output) {
             total_cost += (reasoning_tokens / 1_000_000.0) * reasoning_rate;
+        }
+    }
+
+    if compaction_input_tokens > 0.0 {
+        if let Some(input_rate) = pricing.input {
+            total_cost += (compaction_input_tokens / 1_000_000.0) * input_rate;
+        }
+    }
+
+    if compaction_output_tokens > 0.0 {
+        if let Some(output_rate) = pricing.output {
+            total_cost += (compaction_output_tokens / 1_000_000.0) * output_rate;
+        }
+    }
+
+    total_cost
+}
+
+/// Calculate the cost of server-side compaction passes for tiered models.
+///
+/// The compaction pass summarizes the pre-compaction context, so its own
+/// input size (not the post-compaction prompt) selects the pricing tier.
+/// Compaction usage carries no cache detail, so all input tokens are billed
+/// at the selected input rate.
+fn calculate_tiered_compaction_cost(
+    compaction_input_tokens: f64,
+    compaction_output_tokens: f64,
+    pricing: &ModelPricing,
+) -> f64 {
+    if compaction_input_tokens <= 0.0 && compaction_output_tokens <= 0.0 {
+        return 0.0;
+    }
+
+    let threshold = pricing.threshold_tokens.unwrap_or(TIER_THRESHOLD_TOKENS) as f64;
+    let use_extended_tier = compaction_input_tokens > threshold;
+    let mut total_cost = 0.0;
+
+    if compaction_input_tokens > 0.0 {
+        if let Some(input_rate) = select_tier_rate(
+            pricing.input_base,
+            pricing.input_extended,
+            use_extended_tier,
+        ) {
+            total_cost += (compaction_input_tokens / 1_000_000.0) * input_rate;
+        }
+    }
+
+    if compaction_output_tokens > 0.0 {
+        if let Some(output_rate) = select_tier_rate(
+            pricing.output_base,
+            pricing.output_extended,
+            use_extended_tier,
+        ) {
+            total_cost += (compaction_output_tokens / 1_000_000.0) * output_rate;
         }
     }
 
@@ -1283,6 +1346,8 @@ mod tests {
             cache_creation_input_tokens: Some(8_000),
             cache_read_input_tokens: Some(40_000),
             reasoning_tokens: Some(6_000),
+            compaction_input_tokens: None,
+            compaction_output_tokens: None,
         };
         let above_threshold_usage = UnifiedUsage {
             input_tokens: 260_000,
@@ -1290,6 +1355,8 @@ mod tests {
             cache_creation_input_tokens: Some(8_000),
             cache_read_input_tokens: Some(40_000),
             reasoning_tokens: Some(6_000),
+            compaction_input_tokens: None,
+            compaction_output_tokens: None,
         };
 
         for provider in providers {
@@ -1322,6 +1389,8 @@ mod tests {
             cache_creation_input_tokens: None,
             cache_read_input_tokens: None,
             reasoning_tokens: None,
+            compaction_input_tokens: None,
+            compaction_output_tokens: None,
         };
         let long_context_usage = UnifiedUsage {
             input_tokens: 280_000,
@@ -1329,6 +1398,8 @@ mod tests {
             cache_creation_input_tokens: None,
             cache_read_input_tokens: None,
             reasoning_tokens: None,
+            compaction_input_tokens: None,
+            compaction_output_tokens: None,
         };
 
         assert_nearly_equal(
@@ -1349,6 +1420,8 @@ mod tests {
             cache_creation_input_tokens: None,
             cache_read_input_tokens: Some(250_000),
             reasoning_tokens: Some(6_000),
+            compaction_input_tokens: None,
+            compaction_output_tokens: None,
         };
 
         let cost = calculate_cost(&usage, "openai", "gpt-5.5");
@@ -1373,6 +1446,8 @@ mod tests {
                 cache_creation_input_tokens: None,
                 cache_read_input_tokens: None,
                 reasoning_tokens: Some(10_000),
+                compaction_input_tokens: None,
+                compaction_output_tokens: None,
             };
 
             let expected = expected_cost(provider, pricing, &usage);
@@ -1389,6 +1464,8 @@ mod tests {
             cache_creation_input_tokens: None,
             cache_read_input_tokens: None,
             reasoning_tokens: None,
+            compaction_input_tokens: None,
+            compaction_output_tokens: None,
         };
 
         let cost = calculate_cost(&usage, "unknown_provider", "unknown_model");

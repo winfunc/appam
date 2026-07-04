@@ -212,6 +212,20 @@ pub struct OpenAIConfig {
     /// URL construction and authentication.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub azure: Option<AzureConfig>,
+
+    /// Server-side context compaction configuration.
+    ///
+    /// When active, requests include `context_management` entries that let
+    /// the Responses API compact older conversation content into an encrypted
+    /// `compaction` output item once the rendered context crosses the
+    /// configured token threshold (minimum 1,000 tokens). The compaction item
+    /// is replayed automatically on subsequent requests. Works with appam's
+    /// default stateless mode (`store: false`) and is ZDR-friendly.
+    ///
+    /// Note: `instructions` on the compaction config is Anthropic-only and
+    /// ignored by the OpenAI transport.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compaction: Option<crate::llm::compaction::CompactionConfig>,
 }
 
 impl OpenAIConfig {
@@ -445,6 +459,7 @@ impl Default for OpenAIConfig {
             safety_identifier: None,
             top_logprobs: None,
             azure: None,
+            compaction: None,
         }
     }
 }

@@ -113,6 +113,9 @@ pub struct RuntimeAgent {
     provider_parallel_tool_calls: bool,
     /// Maximum number of concurrent tool executions per batch.
     max_concurrent_tool_executions: usize,
+
+    /// Server-side context compaction configuration (Anthropic and OpenAI).
+    compaction: Option<crate::llm::CompactionConfig>,
 }
 
 impl RuntimeAgent {
@@ -186,6 +189,7 @@ impl RuntimeAgent {
             continuation_message: None,
             provider_parallel_tool_calls: false,
             max_concurrent_tool_executions: 1,
+            compaction: None,
         }
     }
 
@@ -238,6 +242,7 @@ impl RuntimeAgent {
         continuation_message: Option<String>,
         provider_parallel_tool_calls: bool,
         max_concurrent_tool_executions: usize,
+        compaction: Option<crate::llm::CompactionConfig>,
     ) -> Self {
         Self {
             name: name.into(),
@@ -284,6 +289,7 @@ impl RuntimeAgent {
             continuation_message,
             provider_parallel_tool_calls,
             max_concurrent_tool_executions: max_concurrent_tool_executions.max(1),
+            compaction,
         }
     }
 
@@ -582,6 +588,21 @@ impl Agent for RuntimeAgent {
         }
         if let Some(history_auto_save) = self.history_auto_save {
             cfg.history.auto_save = history_auto_save;
+        }
+
+        // Apply server-side compaction configuration to the providers that
+        // support it. Only the active provider's client reads its config, so
+        // setting both is harmless and keeps provider switching seamless.
+        if let Some(ref compaction) = self.compaction {
+            if compaction.is_active() && !cfg.provider.supports_compaction() {
+                tracing::warn!(
+                    provider = %cfg.provider,
+                    "Auto-compaction is enabled but provider does not support server-side \
+                     compaction; the setting will be ignored"
+                );
+            }
+            cfg.anthropic.compaction = Some(compaction.clone());
+            cfg.openai.compaction = Some(compaction.clone());
         }
     }
 

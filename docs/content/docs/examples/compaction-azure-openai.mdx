@@ -1,0 +1,40 @@
+---
+title: Auto-Compaction (Azure OpenAI)
+description: A scripted agent that crosses a 16K-token threshold so the Azure OpenAI Responses API compacts the conversation into an encrypted item.
+---
+
+`examples/compaction-azure-openai.rs` demonstrates `enable_auto_compaction` end to end on Azure OpenAI. Azure's Responses API accepts the same `context_management` compaction entries as direct OpenAI and emits the same encrypted `compaction` items; appam's Azure URL construction and `api-key` authentication work unchanged.
+
+## Run
+
+```bash
+export AZURE_OPENAI_API_KEY="..."
+export AZURE_OPENAI_RESOURCE="my-resource"
+export AZURE_OPENAI_MODEL="gpt-5.4-mini"   # deployment name, optional
+cargo run --example compaction-azure-openai
+```
+
+## What this example actually configures
+
+- `LlmProvider::AzureOpenAI` with your resource name and API version
+- `enable_auto_compaction(16_000)` — comfortably above the compacted-window size
+- One local tool: `fetch_catalog` (~4K tokens per section)
+- An `on_compaction` stream hook and a post-run verification report
+
+## Key builder setup
+
+```rust
+let agent = AgentBuilder::new("compaction-demo-azure-openai")
+    .provider(LlmProvider::AzureOpenAI {
+        resource_name: resource_name.clone(),
+        api_version,
+    })
+    .model(&model)
+    .system_prompt("You are a star catalog librarian. ...")
+    .enable_auto_compaction(16_000)
+    .with_tool(Arc::new(fetch_catalog()))
+    .max_tokens(4096)
+    .build()?;
+```
+
+See the [Context Compaction guide](/docs/guides/compaction) for how compaction works across providers.

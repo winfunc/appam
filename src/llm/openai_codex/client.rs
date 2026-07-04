@@ -232,6 +232,9 @@ impl OpenAICodexClient {
             metadata: None,
             prompt_cache_key: Some(self.session_id.clone()),
             safety_identifier: None,
+            // The ChatGPT Codex backend does not document support for the
+            // `context_management` compaction parameter; omit it.
+            context_management: None,
         })
     }
 
@@ -993,6 +996,8 @@ fn parse_usage(response: &Value) -> Option<crate::llm::unified::UnifiedUsage> {
         cache_creation_input_tokens: None,
         cache_read_input_tokens: (cache_read_tokens > 0).then_some(cache_read_tokens),
         reasoning_tokens: (reasoning_tokens > 0).then_some(reasoning_tokens),
+        compaction_input_tokens: None,
+        compaction_output_tokens: None,
     })
 }
 
@@ -1066,6 +1071,12 @@ fn prepare_codex_messages(messages: &[UnifiedMessage]) -> Vec<UnifiedMessage> {
                         redacted: false,
                     }),
                     UnifiedContentBlock::Thinking { .. } => None,
+                    // The ChatGPT Codex backend does not support the
+                    // context_management compaction API, and OpenAI-platform
+                    // compaction payloads are opaque to it. Dropping the
+                    // block also keeps the shared converter from pruning the
+                    // transcript, so the full retained history is replayed.
+                    UnifiedContentBlock::Compaction { .. } => None,
                     UnifiedContentBlock::Text { .. } if has_tool_use => None,
                     _ => Some(block.clone()),
                 })
@@ -1154,6 +1165,45 @@ mod tests {
         );
         assert_eq!(headers.get("originator").unwrap(), "pi");
         assert!(headers.contains_key("session_id"));
+    }
+
+    #[test]
+    fn test_prepare_codex_messages_strips_compaction_blocks() {
+        // The ChatGPT Codex backend does not support the compaction API, so
+        // OpenAI-platform compaction items must never leak into its requests
+        // or trigger the shared converter's pre-compaction pruning.
+        let messages = vec![
+            crate::llm::UnifiedMessage::user("Old question"),
+            crate::llm::UnifiedMessage {
+                role: crate::llm::UnifiedRole::Assistant,
+                content: vec![
+                    UnifiedContentBlock::Compaction {
+                        content: None,
+                        encrypted_content: Some("opaque".to_string()),
+                        id: Some("cmp_001".to_string()),
+                    },
+                    UnifiedContentBlock::Text {
+                        text: "Answer".to_string(),
+                    },
+                ],
+                id: None,
+                timestamp: None,
+                reasoning: None,
+                reasoning_details: None,
+            },
+            crate::llm::UnifiedMessage::user("Follow-up"),
+        ];
+
+        let prepared = prepare_codex_messages(&messages);
+
+        // Full history retained (nothing pruned) and no compaction blocks left.
+        assert_eq!(prepared.len(), 3);
+        assert!(prepared.iter().all(|message| {
+            message
+                .content
+                .iter()
+                .all(|block| !matches!(block, UnifiedContentBlock::Compaction { .. }))
+        }));
     }
 
     #[test]

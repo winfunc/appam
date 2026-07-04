@@ -341,6 +341,8 @@ impl Usage {
                 .completion_tokens_details
                 .as_ref()
                 .map(|d| d.reasoning_tokens),
+            compaction_input_tokens: None,
+            compaction_output_tokens: None,
         }
     }
 }

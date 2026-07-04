@@ -1,0 +1,129 @@
+---
+title: Context Compaction
+description: Automatically compact long conversations server-side with enable_auto_compaction, without losing history or breaking cost accounting.
+---
+
+Long-running agent sessions eventually outgrow the model's context window. Appam supports **server-side context compaction**: once the conversation crosses a token threshold you choose, the provider itself summarizes older content and continues from the compacted context. Appam handles the wire formats, history replay, tracing, and cost accounting so a single builder call is all you need.
+
+```rust
+use appam::prelude::*;
+
+let agent = AgentBuilder::new("long-horizon-agent")
+    .provider(LlmProvider::Anthropic)
+    .model("claude-sonnet-4-6")
+    .system_prompt("You are a coding agent.")
+    .enable_auto_compaction(100_000) // compact once input crosses ~100K tokens
+    .build()?;
+```
+
+## How It Works
+
+Compaction happens **on the provider's servers** — appam never issues a separate summarization request, so there is no second billed "shadow" call and no client-side summary prompt to maintain.
+
+- **Anthropic** (direct API, AWS Bedrock, Azure Anthropic): appam sends a `context_management` compaction edit plus the `compact-2026-01-12` beta opt-in (header on direct/Azure, `anthropic_beta` body entry on Bedrock). When input tokens cross the trigger, the response starts with a `compaction` content block containing a human-readable summary.
+- **OpenAI Responses** (direct API, Azure OpenAI): appam sends `context_management: [{"type": "compaction", "compact_threshold": N}]`. When the rendered context crosses the threshold, the response includes an encrypted `compaction` item. This works with appam's default stateless mode (`store: false`) and is ZDR-friendly.
+
+Appam stores the compaction artifact in session history and replays it automatically on later turns:
+
+- Anthropic ignores everything before the last `compaction` block in the prompt.
+- For OpenAI, appam prunes items before the most recent compaction item when rebuilding stateless requests, per the Responses API contract.
+
+The full pre-compaction transcript stays in appam's session record — nothing is deleted locally, so sessions remain replayable and auditable.
+
+## Choosing a Threshold
+
+| Provider | Minimum | Default when unset |
+|---|---|---|
+| Anthropic (all transports) | 50,000 tokens | 150,000 tokens |
+| OpenAI (direct, Azure) | 1,000 tokens | 150,000 tokens |
+
+Values below the provider minimum are clamped upward with a warning.
+
+Pick a threshold comfortably above the size of a typical compacted window (summary plus recent turns plus one tool result). If the threshold is too low, the provider re-compacts on every reasoning step, wasting tokens on repeated summarization.
+
+## Custom Instructions (Anthropic)
+
+Anthropic lets you replace the default summarization prompt entirely. Use the full config form when you need to pin what must survive compaction:
+
+```rust
+use appam::prelude::*;
+
+let agent = AgentBuilder::new("careful-agent")
+    .provider(LlmProvider::Anthropic)
+    .model("claude-sonnet-4-6")
+    .system_prompt("You are a coding agent.")
+    .compaction(
+        CompactionConfig::with_trigger_tokens(80_000)
+            .instructions(
+                "Preserve code snippets, file paths, and open TODOs. \
+                 Do not call any tools while writing this summary; respond with text only.",
+            ),
+    )
+    .build()?;
+```
+
+Anthropic occasionally fails the internal summarization step when tools are defined (the model tries to call a tool instead of writing a summary, yielding an empty compaction block). Explicitly forbidding tool use in `instructions`, as above, mitigates this. Appam skips empty compaction blocks on replay so a failed pass never poisons the conversation.
+
+OpenAI ignores `instructions` — its summaries are opaque and encrypted.
+
+## Observing Compaction
+
+Every compaction surfaces as a `StreamEvent::Compaction { provider, summary }` event. With the closure-based stream builder:
+
+```rust
+let session = agent
+    .stream("Work through all twelve modules one by one.")
+    .on_content(|text| print!("{text}"))
+    .on_compaction(|provider, summary| {
+        println!("[context compacted by {provider}]");
+        if let Some(summary) = summary {
+            println!("summary: {summary}"); // Anthropic only; None for OpenAI
+        }
+    })
+    .run()
+    .await?;
+```
+
+The event is also written to JSONL traces and the SQLite trace store as a `compaction` row, so compactions are visible in session replays.
+
+## Cost Accounting
+
+The compaction pass itself consumes tokens. Anthropic reports it in a `usage.iterations` array and **excludes** it from top-level usage; appam parses the iterations, bills the pass at the model's normal input/output rates, and tracks it separately:
+
+```rust
+if let Some(usage) = &session.usage {
+    println!("compaction: {} in / {} out",
+        usage.total_compaction_input_tokens,
+        usage.total_compaction_output_tokens);
+    println!("total cost: ${:.4}", usage.total_cost_usd);
+}
+```
+
+OpenAI includes compaction-pass tokens in the response's own usage, which flows through the existing accounting unchanged.
+
+## Provider Support
+
+| Provider | Server-side compaction |
+|---|---|
+| Anthropic (direct) | Yes — Claude Sonnet 4.6+, Opus 4.6+, Claude 5 family |
+| AWS Bedrock | Yes — Claude Sonnet 4.6 and Opus 4.6 (InvokeModel paths) |
+| Azure Anthropic | Yes — same models as direct Anthropic |
+| OpenAI (direct) | Yes |
+| Azure OpenAI | Yes |
+| OpenRouter | No — setting is ignored with a warning |
+| Vertex (Gemini) | No — setting is ignored with a warning |
+| OpenAI Codex | No — setting is ignored with a warning |
+
+Compaction artifacts are provider-specific. If a session switches providers mid-conversation, appam skips the other provider's compaction blocks during conversion and falls back to replaying the retained history.
+
+## Runnable Examples
+
+Each of these fetches large tool payloads until the provider compacts the conversation, then verifies the summary was retained and replayed:
+
+```bash
+cargo run --example compaction-anthropic        # ANTHROPIC_API_KEY
+cargo run --example compaction-openai           # OPENAI_API_KEY
+cargo run --example compaction-bedrock          # AWS credentials
+cargo run --example compaction-azure-openai     # AZURE_OPENAI_API_KEY + AZURE_OPENAI_RESOURCE
+cargo run --example compaction-azure-anthropic  # AZURE_ANTHROPIC_BASE_URL + key
+```

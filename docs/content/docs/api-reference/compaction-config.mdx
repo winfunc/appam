@@ -1,0 +1,89 @@
+---
+title: CompactionConfig
+description: Configuration for provider-side automatic context compaction.
+---
+
+`CompactionConfig` controls server-side context compaction across direct Anthropic, Azure Anthropic, AWS Bedrock, direct OpenAI, and Azure OpenAI. Appam maps the same high-level setting onto each provider's wire format underneath.
+
+Most callers use `AgentBuilder::enable_auto_compaction(trigger_tokens)` instead of constructing this struct directly; use the struct form when you need custom summarization instructions or the provider-default trigger.
+
+## Struct Definition
+
+```rust
+pub struct CompactionConfig {
+    pub enabled: bool,
+    pub trigger_tokens: Option<u64>,
+    pub instructions: Option<String>,
+}
+```
+
+## Fields
+
+### `enabled`
+
+Whether provider-side compaction is requested. Defaults to `false`.
+
+### `trigger_tokens`
+
+Token threshold at which the provider triggers compaction. `None` uses 150,000 tokens (Anthropic's server default, applied to both providers for predictability).
+
+Provider minimums are enforced by clamping with a warning:
+
+- Anthropic (all transports): 50,000 tokens
+- OpenAI (direct, Azure): 1,000 tokens
+
+### `instructions`
+
+Custom summarization prompt (**Anthropic only** — OpenAI ignores it). Completely replaces Anthropic's default prompt when set. Useful to pin what must survive compaction or to forbid tool use during the internal summarization step.
+
+## Constructors
+
+```rust
+// Enabled with the provider-default trigger threshold
+let config = CompactionConfig::enabled();
+
+// Enabled with an explicit trigger threshold
+let config = CompactionConfig::with_trigger_tokens(100_000);
+
+// With custom Anthropic summarization instructions
+let config = CompactionConfig::with_trigger_tokens(80_000)
+    .instructions("Preserve code snippets and open TODOs. Do not call tools.");
+```
+
+## Usage with AgentBuilder
+
+```rust
+use appam::prelude::*;
+
+// Shorthand
+let agent = AgentBuilder::new("agent")
+    .model("claude-sonnet-4-6")
+    .system_prompt("You are a coding agent.")
+    .enable_auto_compaction(100_000)
+    .build()?;
+
+// Full config form
+let agent = AgentBuilder::new("agent")
+    .model("claude-sonnet-4-6")
+    .system_prompt("You are a coding agent.")
+    .compaction(CompactionConfig::with_trigger_tokens(80_000))
+    .build()?;
+```
+
+`disable_auto_compaction()` undoes a previous call on the same builder.
+
+## Provider Mapping
+
+| Provider | Request field | Beta opt-in | Response artifact |
+|---|---|---|---|
+| Anthropic (direct, Azure) | `context_management.edits[{"type": "compact_20260112", ...}]` | `anthropic-beta: compact-2026-01-12` header | `compaction` content block (summary text) |
+| AWS Bedrock | same body field | `anthropic_beta: ["compact-2026-01-12"]` body array | `compaction` content block (summary text) |
+| OpenAI (direct, Azure) | `context_management: [{"type": "compaction", "compact_threshold": N}]` | none | encrypted `compaction` output item |
+
+Providers without server-side compaction (OpenRouter, Vertex, OpenAI Codex) ignore the configuration; appam logs a warning at session start.
+
+## Usage Tracking
+
+Anthropic bills the compaction pass separately from the response (`usage.iterations`). Appam surfaces those tokens on `UnifiedUsage::compaction_input_tokens` / `compaction_output_tokens` and aggregates them into `AggregatedUsage::total_compaction_input_tokens` / `total_compaction_output_tokens`, billed at the model's standard input/output rates.
+
+See the [Context Compaction guide](/docs/guides/compaction) for threshold guidance, streaming hooks, and runnable examples.

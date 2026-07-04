@@ -444,6 +444,28 @@ Source-backed behavior:
 
 See `src/agent/runtime.rs` and `tests/continuation_tests.rs`.
 
+## Use auto-compaction for long-horizon sessions
+
+`AgentBuilder::enable_auto_compaction(trigger_tokens)` turns on **server-side** context compaction: the provider summarizes older conversation content once the context crosses the threshold, and Appam retains and replays the summary artifact automatically. Supported on Anthropic (direct, Bedrock, Azure Anthropic; minimum trigger 50,000 tokens, compaction-capable models only) and OpenAI Responses (direct, Azure; minimum 1,000 tokens). OpenRouter, Vertex, and Codex ignore it with a warning.
+
+```rust
+let agent = AgentBuilder::new("long-horizon")
+    .provider(LlmProvider::Anthropic)
+    .model("claude-sonnet-4-6")
+    .system_prompt("...")
+    .enable_auto_compaction(100_000)
+    .build()?;
+```
+
+Caveats worth remembering:
+
+- Pick a threshold well above the typical compacted-window size or the server re-compacts on every reasoning step.
+- Compaction fires `StreamEvent::Compaction { provider, summary }` (`summary` is `None` for OpenAI's encrypted items); `StreamBuilder` exposes `.on_compaction(...)`.
+- Anthropic bills the compaction pass separately; Appam tracks it in `AggregatedUsage::total_compaction_input_tokens` / `total_compaction_output_tokens` and includes it in `total_cost_usd`.
+- Use `.compaction(CompactionConfig::with_trigger_tokens(...).instructions(...))` to customize the Anthropic summarization prompt (e.g., forbid tool use during summarization).
+
+The runnable examples are `examples/compaction-{anthropic,openai,bedrock,azure-openai,azure-anthropic}.rs`.
+
 ## Know the provider-specific controls
 
 ### Anthropic
@@ -456,6 +478,7 @@ Use:
 - `.tool_choice(...)`
 - `.effort(...)`
 - `.beta_features(...)`
+- `.enable_auto_compaction(...)` / `.compaction(...)`
 - `.retry(...)`
 - `.rate_limiter(...)`
 

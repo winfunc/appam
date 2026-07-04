@@ -12,6 +12,7 @@
 //!   [`openai_codex`], and [`vertex`] for transport-specific details
 
 pub mod anthropic;
+pub mod compaction;
 pub mod openai;
 pub mod openai_codex;
 pub mod openrouter;
@@ -716,6 +717,7 @@ pub struct ToolExecutionMetadata {
 }
 
 // Re-exports for unified interface
+pub use compaction::CompactionConfig;
 pub use provider::{DynamicLlmClient, LlmClient, LlmProvider, ProviderFailureCapture};
 pub use unified::{
     DocumentSource, ImageSource, StopReason, UnifiedContentBlock, UnifiedMessage, UnifiedRole,

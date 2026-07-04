@@ -9,6 +9,11 @@
     "coding-agent-azure-openai",
     "coding-agent-openrouter-completions",
     "coding-agent-openrouter-responses",
-    "coding-agent-vertex"
+    "coding-agent-vertex",
+    "compaction-anthropic",
+    "compaction-openai",
+    "compaction-bedrock",
+    "compaction-azure-openai",
+    "compaction-azure-anthropic"
   ]
 }

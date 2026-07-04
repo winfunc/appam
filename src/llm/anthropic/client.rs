@@ -258,6 +258,17 @@ impl AnthropicClient {
         self.config.azure.is_some()
     }
 
+    /// Return the compaction configuration when server-side compaction is active.
+    ///
+    /// Centralizes the enabled check so request building and header
+    /// construction cannot drift apart.
+    fn active_compaction_config(&self) -> Option<&crate::llm::compaction::CompactionConfig> {
+        self.config
+            .compaction
+            .as_ref()
+            .filter(|compaction| compaction.is_active())
+    }
+
     /// Check if streaming is supported for the current configuration.
     ///
     /// AWS Bedrock with Bearer token authentication only supports the non-streaming
@@ -409,6 +420,16 @@ impl AnthropicClient {
             headers.insert(ACCEPT, HeaderValue::from_static("text/event-stream"));
             headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
 
+            // Server-side compaction beta. Azure Anthropic preserves the
+            // Messages wire format, so the opt-in uses the same header as the
+            // direct API. Other beta features stay direct-API-only.
+            if self.active_compaction_config().is_some() {
+                headers.insert(
+                    "anthropic-beta",
+                    HeaderValue::from_static(crate::llm::compaction::ANTHROPIC_COMPACTION_BETA),
+                );
+            }
+
             let direct_anthropic_env_key = std::env::var("ANTHROPIC_API_KEY").ok();
             let explicit_config_credential = self.config.api_key.as_ref().filter(|key| {
                 direct_anthropic_env_key
@@ -474,15 +495,14 @@ impl AnthropicClient {
             );
 
             // Beta features (only for direct Anthropic API)
-            if self
+            let mut beta_values = self
                 .config
                 .beta_features
-                .has_any_for_model(&self.config.model)
-            {
-                let beta_values = self
-                    .config
-                    .beta_features
-                    .to_header_values_for_model(Some(&self.config.model));
+                .to_header_values_for_model(Some(&self.config.model));
+            if self.active_compaction_config().is_some() {
+                beta_values.push(crate::llm::compaction::ANTHROPIC_COMPACTION_BETA.to_string());
+            }
+            if !beta_values.is_empty() {
                 let beta_header = beta_values.join(",");
                 headers.insert(
                     "anthropic-beta",
@@ -785,18 +805,37 @@ impl AnthropicClient {
             body["output_config"] = json!({"effort": effort.as_str()});
         }
 
+        // Add server-side compaction via context_management (beta: compact-2026-01-12).
+        // The API summarizes older conversation content into a `compaction`
+        // block once input tokens cross the trigger threshold.
+        if let Some(compaction) = self.active_compaction_config() {
+            let trigger_tokens = compaction
+                .effective_trigger_tokens(crate::llm::compaction::ANTHROPIC_MIN_TRIGGER_TOKENS);
+            let mut edit = json!({
+                "type": crate::llm::compaction::ANTHROPIC_COMPACTION_EDIT_TYPE,
+                "trigger": {
+                    "type": "input_tokens",
+                    "value": trigger_tokens,
+                },
+            });
+            if let Some(ref instructions) = compaction.instructions {
+                edit["instructions"] = json!(instructions);
+            }
+            body["context_management"] = json!({ "edits": [edit] });
+        }
+
         // Add Bedrock beta features in the request body (not HTTP headers)
-        if self.is_bedrock()
-            && self
-                .config
-                .beta_features
-                .has_any_for_model(&self.config.model)
-        {
-            let beta_values = self
+        if self.is_bedrock() {
+            let mut beta_values = self
                 .config
                 .beta_features
                 .to_header_values_for_model(Some(&self.config.model));
-            body["anthropic_beta"] = json!(beta_values);
+            if self.active_compaction_config().is_some() {
+                beta_values.push(crate::llm::compaction::ANTHROPIC_COMPACTION_BETA.to_string());
+            }
+            if !beta_values.is_empty() {
+                body["anthropic_beta"] = json!(beta_values);
+            }
         }
 
         // Add metadata
@@ -895,6 +934,10 @@ impl AnthropicClient {
                 ..
             }
             | ContentBlock::ToolResult {
+                cache_control: slot,
+                ..
+            }
+            | ContentBlock::Compaction {
                 cache_control: slot,
                 ..
             } => {
@@ -1176,6 +1219,8 @@ impl AnthropicClient {
         // Variables to track token usage across the stream
         let mut total_input_tokens = 0u32;
         let mut total_output_tokens = 0u32;
+        let mut pending_compaction_tokens: Option<(u32, u32)> = None;
+        let mut stream_compaction_totals = (0u32, 0u32);
 
         let mut stream = response.bytes_stream();
         let mut buffer = String::new();
@@ -1240,6 +1285,8 @@ impl AnthropicClient {
                             &mut finalized_tool_calls,
                             &mut total_input_tokens,
                             &mut total_output_tokens,
+                            &mut pending_compaction_tokens,
+                            &mut stream_compaction_totals,
                             on_content,
                             on_tool_calls,
                             on_reasoning,
@@ -1264,8 +1311,14 @@ impl AnthropicClient {
             }
         }
 
-        // Return token usage (extracted from MessageDelta events handled earlier)
-        Ok((total_input_tokens, total_output_tokens))
+        // Return token usage (extracted from MessageDelta events handled
+        // earlier). Compaction-pass tokens are excluded from the top-level
+        // counters by the API but consume real provider capacity, so they are
+        // folded into the totals recorded by the rate limiter.
+        Ok((
+            total_input_tokens.saturating_add(stream_compaction_totals.0),
+            total_output_tokens.saturating_add(stream_compaction_totals.1),
+        ))
     }
 
     /// Parse a Bedrock EventStream binary response into Anthropic events.
@@ -1325,6 +1378,8 @@ impl AnthropicClient {
     {
         let mut total_input_tokens = 0u32;
         let mut total_output_tokens = 0u32;
+        let mut pending_compaction_tokens: Option<(u32, u32)> = None;
+        let mut stream_compaction_totals = (0u32, 0u32);
 
         let mut stream = response.bytes_stream();
         let mut buffer = bytes::BytesMut::new();
@@ -1463,6 +1518,8 @@ impl AnthropicClient {
                             &mut finalized_tool_calls,
                             &mut total_input_tokens,
                             &mut total_output_tokens,
+                            &mut pending_compaction_tokens,
+                            &mut stream_compaction_totals,
                             on_content,
                             on_tool_calls,
                             on_reasoning,
@@ -1489,7 +1546,13 @@ impl AnthropicClient {
             }
         }
 
-        Ok((total_input_tokens, total_output_tokens))
+        // Compaction-pass tokens are excluded from the top-level counters by
+        // the API but consume real provider capacity, so they are folded into
+        // the totals recorded by the rate limiter.
+        Ok((
+            total_input_tokens.saturating_add(stream_compaction_totals.0),
+            total_output_tokens.saturating_add(stream_compaction_totals.1),
+        ))
     }
 
     /// Handle a single SSE event.
@@ -1501,6 +1564,8 @@ impl AnthropicClient {
         finalized_tool_calls: &mut Vec<UnifiedToolCall>,
         total_input_tokens: &mut u32,
         total_output_tokens: &mut u32,
+        pending_compaction_tokens: &mut Option<(u32, u32)>,
+        stream_compaction_totals: &mut (u32, u32),
         on_content: &mut FContent,
         on_tool_calls: &mut FTool,
         on_reasoning: &mut FReason,
@@ -1555,6 +1620,14 @@ impl AnthropicClient {
                 // Initialize token tracking from message start
                 *total_input_tokens = message.usage.input_tokens;
                 *total_output_tokens = message.usage.output_tokens;
+
+                // Compaction pass usage may already be reported at message
+                // start; retain it until the final usage callback fires and
+                // keep a stream-level copy for rate-limit accounting.
+                if let Some(totals) = message.usage.compaction_token_totals() {
+                    *pending_compaction_tokens = Some(totals);
+                    *stream_compaction_totals = totals;
+                }
             }
 
             StreamEvent::ContentBlockStart {
@@ -1595,6 +1668,10 @@ impl AnthropicClient {
                         }
                         super::streaming::Delta::SignatureDelta { .. } => {
                             // Signature captured, no callback needed
+                        }
+                        super::streaming::Delta::CompactionDelta { .. } => {
+                            // Complete summary accumulated via apply_delta; the
+                            // block is surfaced once at content_block_stop.
                         }
                     }
                 }
@@ -1654,6 +1731,22 @@ impl AnthropicClient {
                                 crate::llm::unified::UnifiedContentBlock::Text { text };
                             on_content_block_complete(unified_block)?;
                         }
+                        Ok(ContentBlock::Compaction { content, .. }) => {
+                            // Server-side compaction summary - must be replayed
+                            // on subsequent requests so the API can drop the
+                            // pre-compaction context.
+                            info!(
+                                has_summary = content.is_some(),
+                                "Server-side compaction block received"
+                            );
+                            let unified_block =
+                                crate::llm::unified::UnifiedContentBlock::Compaction {
+                                    content,
+                                    encrypted_content: None,
+                                    id: None,
+                                };
+                            on_content_block_complete(unified_block)?;
+                        }
                         Ok(_) => {
                             // Other block types (images, documents) - emit if needed
                             // For now, skip as they're less common
@@ -1691,6 +1784,23 @@ impl AnthropicClient {
                 *total_input_tokens = usage.input_tokens;
                 *total_output_tokens = usage.output_tokens;
 
+                // Compaction pass usage arrives in `usage.iterations` and is
+                // excluded from the top-level counters. Prefer the final
+                // message_delta report, falling back to totals captured at
+                // message_start. The stream-level copy feeds rate-limit
+                // accounting after the stream completes; the pending copy is
+                // consumed exactly once by the usage callback so aggregation
+                // never double-counts.
+                if let Some(totals) = usage.compaction_token_totals() {
+                    *pending_compaction_tokens = Some(totals);
+                    *stream_compaction_totals = totals;
+                }
+                let (compaction_input_tokens, compaction_output_tokens) =
+                    match pending_compaction_tokens.take() {
+                        Some((input, output)) => (Some(input), Some(output)),
+                        None => (None, None),
+                    };
+
                 // Convert Anthropic usage to UnifiedUsage and call callback
                 let unified_usage = crate::llm::unified::UnifiedUsage {
                     input_tokens: usage.input_tokens,
@@ -1698,6 +1808,8 @@ impl AnthropicClient {
                     cache_creation_input_tokens: usage.cache_creation_input_tokens,
                     cache_read_input_tokens: usage.cache_read_input_tokens,
                     reasoning_tokens: None, // Anthropic doesn't separate reasoning tokens
+                    compaction_input_tokens,
+                    compaction_output_tokens,
                 };
                 on_usage(unified_usage)?;
             }
@@ -2305,6 +2417,8 @@ mod tests {
         let mut finalized_tool_calls = Vec::new();
         let mut total_input_tokens = 0u32;
         let mut total_output_tokens = 0u32;
+        let mut pending_compaction_tokens: Option<(u32, u32)> = None;
+        let mut stream_compaction_totals = (0u32, 0u32);
         let mut captured_usage = Vec::new();
 
         let event = serde_json::json!({
@@ -2328,6 +2442,8 @@ mod tests {
                 &mut finalized_tool_calls,
                 &mut total_input_tokens,
                 &mut total_output_tokens,
+                &mut pending_compaction_tokens,
+                &mut stream_compaction_totals,
                 &mut |_text| Ok(()),
                 &mut |_calls| Ok(()),
                 &mut |_reason| Ok(()),
@@ -2350,6 +2466,95 @@ mod tests {
         assert_eq!(usage.cache_creation_input_tokens, Some(42));
         assert_eq!(usage.cache_read_input_tokens, Some(7));
         assert!(usage.reasoning_tokens.is_none());
+        assert!(usage.compaction_input_tokens.is_none());
+        assert!(usage.compaction_output_tokens.is_none());
+    }
+
+    #[test]
+    fn test_handle_event_compaction_usage_iterations() {
+        let config = AnthropicConfig::default();
+        let client = AnthropicClient::new(config).expect("client should initialize");
+
+        let mut blocks = HashMap::new();
+        let mut finalized_tool_calls = Vec::new();
+        let mut total_input_tokens = 0u32;
+        let mut total_output_tokens = 0u32;
+        let mut pending_compaction_tokens: Option<(u32, u32)> = None;
+        let mut stream_compaction_totals = (0u32, 0u32);
+        let mut captured_usage = Vec::new();
+        let mut captured_blocks = Vec::new();
+
+        // Compaction block streamed as start -> single delta -> stop.
+        let start = serde_json::json!({
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": { "type": "compaction", "content": null }
+        });
+        let delta = serde_json::json!({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": { "type": "compaction_delta", "content": "Summary of the conversation" }
+        });
+        let stop = serde_json::json!({ "type": "content_block_stop", "index": 0 });
+        let message_delta = serde_json::json!({
+            "type": "message_delta",
+            "delta": { "stop_reason": "end_turn", "stop_sequence": null },
+            "usage": {
+                "input_tokens": 23000,
+                "output_tokens": 1000,
+                "iterations": [
+                    { "type": "compaction", "input_tokens": 180000, "output_tokens": 3500 },
+                    { "type": "message", "input_tokens": 23000, "output_tokens": 1000 }
+                ]
+            }
+        });
+
+        for event in [&start, &delta, &stop, &message_delta] {
+            client
+                .handle_event(
+                    &event.to_string(),
+                    &mut blocks,
+                    &mut finalized_tool_calls,
+                    &mut total_input_tokens,
+                    &mut total_output_tokens,
+                    &mut pending_compaction_tokens,
+                    &mut stream_compaction_totals,
+                    &mut |_text| Ok(()),
+                    &mut |_calls| Ok(()),
+                    &mut |_reason| Ok(()),
+                    &mut |_partial| Ok(()),
+                    &mut |block| {
+                        captured_blocks.push(block);
+                        Ok(())
+                    },
+                    &mut |usage| {
+                        captured_usage.push(usage);
+                        Ok(())
+                    },
+                    false,
+                )
+                .expect("compaction events should be handled");
+        }
+
+        // Compaction block surfaced with the summary text intact.
+        assert!(captured_blocks.iter().any(|block| matches!(
+            block,
+            crate::llm::unified::UnifiedContentBlock::Compaction {
+                content: Some(content),
+                ..
+            } if content == "Summary of the conversation"
+        )));
+
+        // Usage carries the compaction pass separately from top-level counters.
+        let usage = captured_usage.first().expect("usage callback should fire");
+        assert_eq!(usage.input_tokens, 23000);
+        assert_eq!(usage.output_tokens, 1000);
+        assert_eq!(usage.compaction_input_tokens, Some(180000));
+        assert_eq!(usage.compaction_output_tokens, Some(3500));
+
+        // The stream-level copy survives for rate-limit accounting even
+        // though the pending copy was consumed by the usage callback.
+        assert_eq!(stream_compaction_totals, (180000, 3500));
     }
 
     #[test]
@@ -2449,6 +2654,97 @@ mod tests {
         .expect("azure client should initialize");
 
         assert_eq!(client.provider_name(), "azure-anthropic");
+    }
+
+    #[test]
+    fn test_build_request_body_includes_context_management_for_compaction() {
+        let client = AnthropicClient::new(AnthropicConfig {
+            api_key: Some("test-key".to_string()),
+            compaction: Some(
+                crate::llm::compaction::CompactionConfig::with_trigger_tokens(120_000),
+            ),
+            ..Default::default()
+        })
+        .expect("anthropic client should initialize");
+
+        let body = client
+            .build_request_body(&[UnifiedMessage::user("Long-running task.")], &[])
+            .expect("request body should build");
+
+        let edit = &body["context_management"]["edits"][0];
+        assert_eq!(edit["type"], "compact_20260112");
+        assert_eq!(edit["trigger"]["type"], "input_tokens");
+        assert_eq!(edit["trigger"]["value"], 120_000);
+        assert!(edit.get("instructions").is_none());
+
+        // Beta opt-in travels via the anthropic-beta header for direct API
+        let headers = client.build_headers().expect("headers should build");
+        assert!(headers
+            .get("anthropic-beta")
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.contains("compact-2026-01-12")));
+    }
+
+    #[test]
+    fn test_build_request_body_clamps_compaction_trigger_and_keeps_instructions() {
+        let client = AnthropicClient::new(AnthropicConfig {
+            compaction: Some(
+                crate::llm::compaction::CompactionConfig::with_trigger_tokens(10_000)
+                    .instructions("Preserve code snippets."),
+            ),
+            ..Default::default()
+        })
+        .expect("anthropic client should initialize");
+
+        let body = client
+            .build_request_body(&[UnifiedMessage::user("Long-running task.")], &[])
+            .expect("request body should build");
+
+        let edit = &body["context_management"]["edits"][0];
+        // Below Anthropic's documented 50K minimum -> clamped upward
+        assert_eq!(edit["trigger"]["value"], 50_000);
+        assert_eq!(edit["instructions"], "Preserve code snippets.");
+    }
+
+    #[test]
+    fn test_build_request_body_bedrock_compaction_uses_body_beta() {
+        let client = AnthropicClient::new(AnthropicConfig {
+            bedrock: Some(super::super::config::BedrockConfig::default()),
+            compaction: Some(crate::llm::compaction::CompactionConfig::enabled()),
+            ..Default::default()
+        })
+        .expect("bedrock client should initialize");
+
+        let body = client
+            .build_request_body(&[UnifiedMessage::user("Long-running task.")], &[])
+            .expect("request body should build");
+
+        // Bedrock carries the beta opt-in in the body, not an HTTP header
+        let betas = body["anthropic_beta"]
+            .as_array()
+            .expect("anthropic_beta array should be present");
+        assert!(betas.iter().any(|value| value == "compact-2026-01-12"));
+        assert_eq!(
+            body["context_management"]["edits"][0]["type"],
+            "compact_20260112"
+        );
+        // Default trigger applies when unset
+        assert_eq!(
+            body["context_management"]["edits"][0]["trigger"]["value"],
+            150_000
+        );
+    }
+
+    #[test]
+    fn test_build_request_body_omits_context_management_when_disabled() {
+        let client =
+            AnthropicClient::new(AnthropicConfig::default()).expect("client should initialize");
+
+        let body = client
+            .build_request_body(&[UnifiedMessage::user("Hello")], &[])
+            .expect("request body should build");
+
+        assert!(body.get("context_management").is_none());
     }
 
     #[test]

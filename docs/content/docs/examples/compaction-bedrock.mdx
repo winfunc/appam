@@ -1,0 +1,43 @@
+---
+title: Auto-Compaction (Bedrock)
+description: A scripted agent that crosses the 50K-token trigger so Claude on AWS Bedrock compacts the conversation server-side.
+---
+
+`examples/compaction-bedrock.rs` demonstrates `enable_auto_compaction` end to end on AWS Bedrock. It mirrors the direct-Anthropic compaction example, but appam sends the compaction beta as an `anthropic_beta` entry in the request body (Bedrock does not use the HTTP header) and parses the `compaction` block from Bedrock's EventStream binary framing.
+
+Bedrock currently documents compaction support for Claude Sonnet 4.6 and Claude Opus 4.6, on the InvokeModel / InvokeModelWithResponseStream paths that appam uses.
+
+## Run
+
+```bash
+export AWS_ACCESS_KEY_ID="..."
+export AWS_SECRET_ACCESS_KEY="..."
+export AWS_REGION="us-east-1"                                # optional
+export AWS_BEDROCK_MODEL_ID="us.anthropic.claude-sonnet-4-6" # optional
+cargo run --example compaction-bedrock
+```
+
+## What this example actually configures
+
+- `LlmProvider::Bedrock` with SigV4 auth and model `us.anthropic.claude-sonnet-4-6`
+- `enable_auto_compaction(50_000)` — the Anthropic minimum trigger
+- One local tool: `fetch_archive` (~16K tokens per volume)
+- An `on_compaction` stream hook and a post-run verification report
+
+## Key builder setup
+
+```rust
+let agent = AgentBuilder::new("compaction-demo-bedrock")
+    .provider(LlmProvider::Bedrock {
+        region: region.clone(),
+        model_id: model_id.clone(),
+        auth_method: appam::llm::anthropic::BedrockAuthMethod::SigV4,
+    })
+    .system_prompt("You are an expedition archivist. ...")
+    .enable_auto_compaction(50_000)
+    .with_tool(Arc::new(fetch_archive()))
+    .max_tokens(4096)
+    .build()?;
+```
+
+See the [Context Compaction guide](/docs/guides/compaction) for how compaction works across providers.

@@ -315,6 +315,25 @@ impl LlmProvider {
             Self::OpenRouterCompletions | Self::OpenRouterResponses => "openrouter",
         }
     }
+
+    /// Whether the provider supports server-side context compaction.
+    ///
+    /// Anthropic transports (direct, Bedrock, Azure Anthropic) implement the
+    /// `context_management` compaction edit (beta `compact-2026-01-12`), and
+    /// OpenAI Responses transports (direct, Azure OpenAI) implement the
+    /// `context_management` compaction entry. OpenRouter, Vertex, and the
+    /// ChatGPT-backed Codex transport expose no equivalent, so appam ignores
+    /// compaction configuration for them and logs a warning.
+    pub fn supports_compaction(&self) -> bool {
+        matches!(
+            self,
+            Self::Anthropic
+                | Self::AzureAnthropic { .. }
+                | Self::Bedrock { .. }
+                | Self::OpenAI
+                | Self::AzureOpenAI { .. }
+        )
+    }
 }
 
 /// Common streaming interface implemented by provider clients.

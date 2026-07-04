@@ -46,6 +46,7 @@ type ContentHandler = dyn Fn(&str) + Send + Sync;
 type ToolCallHandler = dyn Fn(&str, &str) + Send + Sync;
 type ToolResultHandler = dyn Fn(&str, &Value) + Send + Sync;
 type DoneHandler = dyn Fn() + Send + Sync;
+type CompactionHandler = dyn Fn(&str, Option<&str>) + Send + Sync;
 type AsyncToolCallHandler = dyn Fn(String, String) -> BoxFuture<'static, Result<()>> + Send + Sync;
 type AsyncToolResultHandler = dyn Fn(String, Value) -> BoxFuture<'static, Result<()>> + Send + Sync;
 
@@ -100,6 +101,7 @@ pub struct StreamBuilder<'a> {
     on_error: Option<Arc<ContentHandler>>,
     on_done: Option<Arc<DoneHandler>>,
     on_session_started: Option<Arc<ContentHandler>>,
+    on_compaction: Option<Arc<CompactionHandler>>,
 
     // Async closure handlers (spawn tasks)
     on_tool_call_async: Option<Arc<AsyncToolCallHandler>>,
@@ -123,6 +125,7 @@ impl<'a> StreamBuilder<'a> {
             on_error: None,
             on_done: None,
             on_session_started: None,
+            on_compaction: None,
             on_tool_call_async: None,
             on_tool_result_async: None,
         }
@@ -364,6 +367,43 @@ impl<'a> StreamBuilder<'a> {
         self
     }
 
+    /// Handle server-side context compaction events.
+    ///
+    /// Fired when the provider compacted the conversation because it crossed
+    /// the threshold configured via `AgentBuilder::enable_auto_compaction`.
+    /// The first argument is the provider label (e.g., `"anthropic"`), the
+    /// second is the human-readable summary when the provider exposes one
+    /// (Anthropic; `None` for OpenAI's encrypted summaries).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use appam::prelude::*;
+    /// # use anyhow::Result;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<()> {
+    /// # let agent = Agent::quick("openai/gpt-4o", "You are helpful.", vec![])?;
+    /// agent
+    ///     .stream("Hello")
+    ///     .on_compaction(|provider, summary| {
+    ///         println!("[context compacted by {provider}]");
+    ///         if let Some(summary) = summary {
+    ///             println!("summary: {summary}");
+    ///         }
+    ///     })
+    ///     .run()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn on_compaction<F>(mut self, f: F) -> Self
+    where
+        F: Fn(&str, Option<&str>) + Send + Sync + 'static,
+    {
+        self.on_compaction = Some(Arc::new(f));
+        self
+    }
+
     /// Handle tool calls with async operations
     ///
     /// Use this when you need to perform async operations like database writes or
@@ -468,6 +508,7 @@ impl<'a> StreamBuilder<'a> {
             on_error: self.on_error,
             on_done: self.on_done,
             on_session_started: self.on_session_started,
+            on_compaction: self.on_compaction,
             on_tool_call_async: self.on_tool_call_async,
             on_tool_result_async: self.on_tool_result_async,
         };
@@ -488,6 +529,7 @@ struct ClosureConsumer {
     on_error: Option<Arc<ContentHandler>>,
     on_done: Option<Arc<DoneHandler>>,
     on_session_started: Option<Arc<ContentHandler>>,
+    on_compaction: Option<Arc<CompactionHandler>>,
     on_tool_call_async: Option<Arc<AsyncToolCallHandler>>,
     on_tool_result_async: Option<Arc<AsyncToolResultHandler>>,
 }
@@ -563,6 +605,11 @@ impl StreamConsumer for ClosureConsumer {
             StreamEvent::Done => {
                 if let Some(ref f) = self.on_done {
                     f();
+                }
+            }
+            StreamEvent::Compaction { provider, summary } => {
+                if let Some(ref f) = self.on_compaction {
+                    f(provider, summary.as_deref());
                 }
             }
             // Ignore other events (TurnCompleted, UsageUpdate)

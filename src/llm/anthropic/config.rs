@@ -162,6 +162,21 @@ pub struct AnthropicConfig {
     #[serde(default)]
     pub beta_features: BetaFeatures,
 
+    /// Server-side context compaction configuration (beta: compact-2026-01-12).
+    ///
+    /// When active, requests include a `context_management` edit that lets the
+    /// Anthropic API summarize older conversation content into a `compaction`
+    /// content block once the input crosses the configured token threshold
+    /// (minimum 50,000 tokens; Anthropic default 150,000). The beta header
+    /// (direct/Azure) or `anthropic_beta` body entry (Bedrock) is added
+    /// automatically — no `beta_features` flag is required.
+    ///
+    /// Supported models: Claude Sonnet 4.6+, Opus 4.6+, and the Claude 5
+    /// family. Bedrock currently documents support for Sonnet 4.6 and
+    /// Opus 4.6 only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compaction: Option<crate::llm::compaction::CompactionConfig>,
+
     /// Request metadata
     ///
     /// Optional metadata for tracking and analytics.
@@ -317,6 +332,7 @@ impl Default for AnthropicConfig {
             tool_choice: None,
             effort: None,
             beta_features: BetaFeatures::default(),
+            compaction: None,
             metadata: None,
             retry: Some(RetryConfig::default()),
             network_retry: Some(NetworkRetryConfig::default()),

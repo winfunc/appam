@@ -14,6 +14,7 @@
     "schema-macro",
     "streaming-guide",
     "session-persistence",
+    "compaction",
     "toml-configuration",
     "web-api",
     "environment-variables",

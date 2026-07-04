@@ -1,0 +1,39 @@
+---
+title: Auto-Compaction (OpenAI)
+description: A scripted agent that crosses a 16K-token threshold so the OpenAI Responses API compacts the conversation into an encrypted item.
+---
+
+`examples/compaction-openai.rs` demonstrates `enable_auto_compaction` end to end on the OpenAI Responses API: a `fetch_catalog` tool returns ~4K tokens per call, the model fetches five sections one at a time, and the API compacts the conversation into encrypted `compaction` items mid-session. Appam replays the items automatically and prunes pre-compaction input on later turns. Works with appam's default stateless mode (`store: false`).
+
+## Run
+
+```bash
+export OPENAI_API_KEY="sk-..."
+cargo run --example compaction-openai
+```
+
+## What this example actually configures
+
+- `LlmProvider::OpenAI` with model `gpt-5-mini`
+- `enable_auto_compaction(16_000)` — comfortably above the compacted-window size so the server does not re-compact on every reasoning step
+- One local tool: `fetch_catalog` (~4K tokens per section)
+- An `on_compaction` stream hook (OpenAI summaries are opaque, so no summary text)
+- A post-run report over `session.messages` and `session.usage`
+
+## Key builder setup
+
+```rust
+let agent = AgentBuilder::new("compaction-demo-openai")
+    .provider(LlmProvider::OpenAI)
+    .model("gpt-5-mini")
+    .system_prompt(
+        "You are a star catalog librarian. Fetch catalog sections with the \
+         fetch_catalog tool exactly as instructed, one section per tool call.",
+    )
+    .enable_auto_compaction(16_000)
+    .with_tool(Arc::new(fetch_catalog()))
+    .max_tokens(4096)
+    .build()?;
+```
+
+See the [Context Compaction guide](/docs/guides/compaction) for how compaction works across providers.

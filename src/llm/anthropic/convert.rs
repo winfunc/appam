@@ -140,8 +140,18 @@ fn is_only_tool_results(content: &[ContentBlock]) -> bool {
 /// Returns an error if messages cannot be converted (e.g., invalid roles).
 pub fn from_unified_messages(
     messages: &[UnifiedMessage],
-    _config: &AnthropicConfig,
+    config: &AnthropicConfig,
 ) -> Result<(Option<SystemPrompt>, Vec<Message>)> {
+    // Compaction blocks are only legal on the wire when the request also
+    // carries the compact-2026-01-12 beta opt-in AND the compact_20260112
+    // context_management edit; both are emitted only while compaction is
+    // active. Replaying a block without them is a guaranteed 400, so the
+    // blocks are dropped when compaction is inactive and the request falls
+    // back to the full retained history.
+    let compaction_active = config
+        .compaction
+        .as_ref()
+        .is_some_and(|compaction| compaction.is_active());
     let mut system_texts: Vec<String> = Vec::new();
     let mut conversation: Vec<Message> = Vec::new();
 
@@ -162,6 +172,9 @@ pub fn from_unified_messages(
                 let mut other_blocks = Vec::new();
 
                 for block in &msg.content {
+                    if !block_replayable_on_anthropic(block, compaction_active) {
+                        continue;
+                    }
                     let anthropic_block = from_unified_content_block(block)?;
                     match anthropic_block {
                         ContentBlock::ToolResult { .. } => {
@@ -190,6 +203,7 @@ pub fn from_unified_messages(
                 let content = msg
                     .content
                     .iter()
+                    .filter(|block| block_replayable_on_anthropic(block, compaction_active))
                     .map(from_unified_content_block)
                     .collect::<Result<Vec<_>>>()?;
 
@@ -218,6 +232,23 @@ pub fn from_unified_messages(
     };
 
     Ok((system_prompt, conversation))
+}
+
+/// Whether a unified block can be replayed to the Anthropic Messages API.
+///
+/// Compaction blocks are provider-specific: only Anthropic-origin blocks
+/// (which carry human-readable `content`) can be replayed here, and only
+/// while compaction is active on the request — the API rejects `compaction`
+/// blocks unless the beta opt-in and `context_management` edit are present.
+/// Blocks from other providers (opaque `encrypted_content` only), failed
+/// compaction passes (`content: null`), and blocks replayed while compaction
+/// is disabled are all skipped so the request falls back to the full retained
+/// history instead of sending a block the API would reject.
+fn block_replayable_on_anthropic(block: &UnifiedContentBlock, compaction_active: bool) -> bool {
+    match block {
+        UnifiedContentBlock::Compaction { content, .. } => compaction_active && content.is_some(),
+        _ => true,
+    }
 }
 
 /// Convert unified content block to Anthropic content block.
@@ -311,6 +342,11 @@ fn from_unified_content_block(block: &UnifiedContentBlock) -> Result<ContentBloc
                 })
             }
         }
+
+        UnifiedContentBlock::Compaction { content, .. } => Ok(ContentBlock::Compaction {
+            content: content.clone(),
+            cache_control: None,
+        }),
     }
 }
 
@@ -406,6 +442,12 @@ pub fn to_unified_content_block(block: &ContentBlock) -> UnifiedContentBlock {
             encrypted_content: None,
             redacted: true,
         },
+
+        ContentBlock::Compaction { content, .. } => UnifiedContentBlock::Compaction {
+            content: content.clone(),
+            encrypted_content: None,
+            id: None,
+        },
     }
 }
 
@@ -475,6 +517,94 @@ pub fn tool_choice_to_json(choice: &ToolChoiceConfig) -> Result<JsonValue> {
 mod tests {
     use super::*;
     use crate::llm::anthropic::config::{CacheTTL, CachingConfig};
+
+    fn assistant_with_compaction_block() -> UnifiedMessage {
+        UnifiedMessage {
+            role: UnifiedRole::Assistant,
+            content: vec![
+                UnifiedContentBlock::Compaction {
+                    content: Some("Summary of prior turns.".to_string()),
+                    encrypted_content: None,
+                    id: None,
+                },
+                UnifiedContentBlock::Text {
+                    text: "Continuing.".to_string(),
+                },
+            ],
+            id: None,
+            timestamp: None,
+            reasoning: None,
+            reasoning_details: None,
+        }
+    }
+
+    #[test]
+    fn test_compaction_blocks_replayed_only_while_compaction_is_active() {
+        let messages = vec![
+            UnifiedMessage::user("Long task"),
+            assistant_with_compaction_block(),
+            UnifiedMessage::user("Follow-up"),
+        ];
+
+        // Active: the block replays so the API can resume from the summary.
+        let active_config = AnthropicConfig {
+            compaction: Some(crate::llm::compaction::CompactionConfig::enabled()),
+            ..Default::default()
+        };
+        let (_, conversation) = from_unified_messages(&messages, &active_config).unwrap();
+        assert!(conversation[1]
+            .content
+            .iter()
+            .any(|block| matches!(block, ContentBlock::Compaction { .. })));
+
+        // Inactive: the API rejects compaction blocks without the beta
+        // opt-in + context_management edit, so the block must be dropped and
+        // the retained history replayed instead.
+        let inactive_config = AnthropicConfig::default();
+        let (_, conversation) = from_unified_messages(&messages, &inactive_config).unwrap();
+        assert!(conversation.iter().all(|message| {
+            message
+                .content
+                .iter()
+                .all(|block| !matches!(block, ContentBlock::Compaction { .. }))
+        }));
+        // The assistant text survives the filtering.
+        assert!(conversation[1]
+            .content
+            .iter()
+            .any(|block| matches!(block, ContentBlock::Text { .. })));
+    }
+
+    #[test]
+    fn test_failed_compaction_blocks_never_replayed() {
+        let messages = vec![UnifiedMessage {
+            role: UnifiedRole::Assistant,
+            content: vec![
+                UnifiedContentBlock::Compaction {
+                    content: None, // failed summarization pass
+                    encrypted_content: None,
+                    id: None,
+                },
+                UnifiedContentBlock::Text {
+                    text: "Recovered.".to_string(),
+                },
+            ],
+            id: None,
+            timestamp: None,
+            reasoning: None,
+            reasoning_details: None,
+        }];
+
+        let config = AnthropicConfig {
+            compaction: Some(crate::llm::compaction::CompactionConfig::enabled()),
+            ..Default::default()
+        };
+        let (_, conversation) = from_unified_messages(&messages, &config).unwrap();
+        assert!(conversation[0]
+            .content
+            .iter()
+            .all(|block| !matches!(block, ContentBlock::Compaction { .. })));
+    }
 
     #[test]
     fn test_system_message_extraction() {

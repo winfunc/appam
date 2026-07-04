@@ -58,10 +58,22 @@ fn latest_provider_response_id(messages: &[ChatMessage]) -> Option<String> {
     })
 }
 
+/// Whether the raw blocks contain content that counts as a substantive
+/// assistant turn.
+///
+/// Thinking blocks are internal reasoning, and compaction blocks are
+/// provider-side bookkeeping (a summary of *prior* turns) — neither
+/// constitutes a visible response. A turn carrying only these block types is
+/// treated as blank so the runtime's continuation/error handling applies
+/// instead of ending the session with empty output.
 fn has_non_thinking_raw_content(blocks: &[crate::llm::UnifiedContentBlock]) -> bool {
-    blocks
-        .iter()
-        .any(|block| !matches!(block, crate::llm::UnifiedContentBlock::Thinking { .. }))
+    blocks.iter().any(|block| {
+        !matches!(
+            block,
+            crate::llm::UnifiedContentBlock::Thinking { .. }
+                | crate::llm::UnifiedContentBlock::Compaction { .. }
+        )
+    })
 }
 
 fn blank_assistant_turn(
@@ -356,6 +368,51 @@ fn emit_stream_error_event(
             "Failed to emit stream error event"
         );
     }
+}
+
+/// Record a completed content block for the current assistant turn.
+///
+/// All completed blocks are appended to the turn's raw block list so they can
+/// be replayed verbatim on later requests (thinking signatures, compaction
+/// summaries, and so on). When the block is a server-side compaction summary,
+/// a [`StreamEvent::Compaction`] observability event is also emitted so
+/// traces and UIs can surface that the provider compacted the conversation.
+///
+/// The block is pushed **before** the event is emitted: a failing consumer
+/// aborts the turn, but it must never cause the compaction artifact to be
+/// silently missing from history.
+///
+/// # Errors
+///
+/// Propagates consumer errors, which abort the streaming turn per the
+/// [`StreamConsumer`](super::streaming::StreamConsumer) contract.
+fn record_completed_content_block(
+    content_block: crate::llm::UnifiedContentBlock,
+    raw_content_blocks: &mut Vec<crate::llm::UnifiedContentBlock>,
+    multi_consumer: &MultiConsumer,
+    provider_label: &str,
+) -> Result<()> {
+    let compaction_summary =
+        if let crate::llm::UnifiedContentBlock::Compaction { content, .. } = &content_block {
+            Some(content.clone())
+        } else {
+            None
+        };
+
+    raw_content_blocks.push(content_block);
+
+    if let Some(summary) = compaction_summary {
+        info!(
+            provider = provider_label,
+            has_summary = summary.is_some(),
+            "Provider performed server-side context compaction"
+        );
+        multi_consumer.on_event(&StreamEvent::Compaction {
+            provider: provider_label.to_string(),
+            summary,
+        })?;
+    }
+    Ok(())
 }
 
 /// Build a user message for continuation and reload flows.
@@ -798,6 +855,7 @@ pub async fn default_run_streaming<A: Agent + ?Sized>(
     let provider_variant = client.provider();
     let provider_usage_key = provider_variant.pricing_key().to_string();
     let model_name = select_usage_model(&cfg, &provider_variant);
+    let provider_label = client.provider_name().to_string();
 
     let emitted_tool_calls = Arc::new(Mutex::new(HashSet::<String>::new()));
 
@@ -876,9 +934,14 @@ pub async fn default_run_streaming<A: Agent + ?Sized>(
                     Ok(())
                 },
                 |content_block| {
-                    // Complete content block callback - preserves thinking signatures
-                    raw_content_blocks.push(content_block);
-                    Ok(())
+                    // Complete content block callback - preserves thinking
+                    // signatures and surfaces server-side compaction events
+                    record_completed_content_block(
+                        content_block,
+                        &mut raw_content_blocks,
+                        &multi_consumer,
+                        &provider_label,
+                    )
                 },
                 {
                     let tracker = usage_tracker.clone();
@@ -1222,6 +1285,7 @@ pub async fn default_run_streaming_with_messages<A: Agent + ?Sized>(
     let provider_variant = client.provider();
     let provider_usage_key = provider_variant.pricing_key().to_string();
     let model_name = select_usage_model(&cfg, &provider_variant);
+    let provider_label = client.provider_name().to_string();
 
     let emitted_tool_calls = Arc::new(Mutex::new(HashSet::<String>::new()));
 
@@ -1296,8 +1360,12 @@ pub async fn default_run_streaming_with_messages<A: Agent + ?Sized>(
                     Ok(())
                 },
                 |content_block| {
-                    raw_content_blocks.push(content_block);
-                    Ok(())
+                    record_completed_content_block(
+                        content_block,
+                        &mut raw_content_blocks,
+                        &multi_consumer,
+                        &provider_label,
+                    )
                 },
                 {
                     let tracker = usage_tracker.clone();
@@ -1867,6 +1935,7 @@ async fn continue_loaded_session_streaming<A: Agent + ?Sized>(
     let provider_variant = client.provider();
     let provider_usage_key = provider_variant.pricing_key().to_string();
     let model_name = select_usage_model(&cfg, &provider_variant);
+    let provider_label = client.provider_name().to_string();
 
     // Ensure the session metadata reflects the active provider/model pair.
     session.model = model_name.clone();
@@ -1944,9 +2013,14 @@ async fn continue_loaded_session_streaming<A: Agent + ?Sized>(
                     Ok(())
                 },
                 |content_block| {
-                    // Complete content block callback - preserves thinking signatures
-                    raw_content_blocks.push(content_block);
-                    Ok(())
+                    // Complete content block callback - preserves thinking
+                    // signatures and surfaces server-side compaction events
+                    record_completed_content_block(
+                        content_block,
+                        &mut raw_content_blocks,
+                        &multi_consumer,
+                        &provider_label,
+                    )
                 },
                 {
                     let tracker = usage_tracker.clone();
@@ -2301,8 +2375,8 @@ fn tool_specs_to_unified(specs: &[crate::llm::ToolSpec]) -> Vec<crate::llm::Unif
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_finalized_tool_calls, execute_pending_tool_calls, replace_session_messages,
-        required_completion_continuation_decision, select_usage_model,
+        apply_finalized_tool_calls, blank_assistant_turn, execute_pending_tool_calls,
+        replace_session_messages, required_completion_continuation_decision, select_usage_model,
         RequiredCompletionContinuationDecision,
     };
     use crate::agent::{AgentBuilder, Session};
@@ -2366,6 +2440,32 @@ mod tests {
             provider_response_id: None,
             status: None,
         }
+    }
+
+    #[test]
+    fn blank_assistant_turn_treats_compaction_only_blocks_as_blank() {
+        // A compaction block is provider-side bookkeeping about *prior*
+        // turns, not a response. A turn carrying only compaction/thinking
+        // blocks must hit the blank-turn handling instead of ending the
+        // session with empty output.
+        let compaction_only = vec![crate::llm::UnifiedContentBlock::Compaction {
+            content: Some("Summary".to_string()),
+            encrypted_content: None,
+            id: None,
+        }];
+        assert!(blank_assistant_turn("", &[], &compaction_only));
+
+        let compaction_with_text = vec![
+            crate::llm::UnifiedContentBlock::Compaction {
+                content: Some("Summary".to_string()),
+                encrypted_content: None,
+                id: None,
+            },
+            crate::llm::UnifiedContentBlock::Text {
+                text: "Real answer".to_string(),
+            },
+        ];
+        assert!(!blank_assistant_turn("", &[], &compaction_with_text));
     }
 
     #[test]

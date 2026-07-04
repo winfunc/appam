@@ -260,8 +260,8 @@ pub mod prelude {
 
     // LLM types
     pub use crate::llm::{
-        ChatMessage, DynamicLlmClient, LlmClient, LlmProvider, Role, ToolSpec, UnifiedMessage,
-        UnifiedTool, UnifiedToolCall,
+        ChatMessage, CompactionConfig, DynamicLlmClient, LlmClient, LlmProvider, Role, ToolSpec,
+        UnifiedMessage, UnifiedTool, UnifiedToolCall,
     };
 
     // Tool system

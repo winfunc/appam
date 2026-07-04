@@ -875,6 +875,8 @@ impl VertexClient {
                 cache_creation_input_tokens: None,
                 cache_read_input_tokens: None,
                 reasoning_tokens: usage.thoughts_token_count.filter(|value| *value > 0),
+                compaction_input_tokens: None,
+                compaction_output_tokens: None,
             };
             on_usage(unified_usage)?;
         }

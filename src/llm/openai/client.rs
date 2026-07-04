@@ -500,11 +500,26 @@ impl OpenAIClient {
         messages: &[UnifiedMessage],
         tools: &[UnifiedTool],
     ) -> Result<ResponseCreateParams> {
+        // With `store: false` (appam's default), responses created by this
+        // client are never persisted server-side, so anchoring follow-up
+        // requests to their IDs guarantees a `previous_response_not_found`
+        // failure and a wasted retry on every turn. Only an anchor the caller
+        // explicitly configured is honored in stateless mode, since it may
+        // reference a response stored by another client.
         let previous_response_id = self
             .previous_response_id
             .lock()
             .expect("previous response id mutex poisoned")
-            .clone();
+            .clone()
+            .filter(|id| {
+                self.config.store != Some(false)
+                    || self
+                        .config
+                        .conversation
+                        .as_ref()
+                        .and_then(|conversation| conversation.previous_response_id.as_deref())
+                        == Some(id.as_str())
+            });
         // Convert unified messages to OpenAI input format. System prompts are
         // lifted into top-level `instructions`, while `input` contains only the
         // conversation items that should participate in the item stream.
@@ -647,6 +662,19 @@ impl OpenAIClient {
                 .filter(|store| !store)
                 .map(|_| vec!["reasoning.encrypted_content".to_string()]),
             truncation: None,
+            context_management: self
+                .config
+                .compaction
+                .as_ref()
+                .filter(|compaction| compaction.is_active())
+                .map(|compaction| {
+                    vec![ContextManagementEntry {
+                        entry_type: "compaction".to_string(),
+                        compact_threshold: Some(compaction.effective_trigger_tokens(
+                            crate::llm::compaction::OPENAI_MIN_TRIGGER_TOKENS,
+                        )),
+                    }]
+                }),
         };
 
         Ok(params)
@@ -1222,6 +1250,8 @@ impl OpenAIClient {
                         cache_read_input_tokens: (cache_read_tokens > 0)
                             .then_some(cache_read_tokens),
                         reasoning_tokens: (reasoning_tokens > 0).then_some(reasoning_tokens),
+                        compaction_input_tokens: None,
+                        compaction_output_tokens: None,
                     };
                     on_usage(unified_usage)?;
                 }
@@ -1525,7 +1555,10 @@ mod tests {
 
     #[test]
     fn test_set_previous_response_id_updates_follow_up_requests() {
-        let client = build_test_client(OpenAIConfig::default());
+        let client = build_test_client(OpenAIConfig {
+            store: Some(true),
+            ..Default::default()
+        });
         client.set_previous_response_id(Some("resp_follow_up".to_string()));
 
         let request = client
@@ -1539,6 +1572,42 @@ mod tests {
     }
 
     #[test]
+    fn test_previous_response_id_suppressed_for_unstored_responses() {
+        // store defaults to false: runtime-captured anchors would 400 with
+        // previous_response_not_found, so they must not be sent.
+        let client = build_test_client(OpenAIConfig::default());
+        client.set_previous_response_id(Some("resp_unstored".to_string()));
+
+        let request = client
+            .build_request_body(&[UnifiedMessage::user("hello again")], &[])
+            .expect("request body should build");
+
+        assert!(request.previous_response_id.is_none());
+    }
+
+    #[test]
+    fn test_explicit_config_anchor_survives_stateless_mode() {
+        // A caller-configured anchor may reference a response stored by
+        // another client, so it is honored even with store=false.
+        let client = build_test_client(OpenAIConfig {
+            conversation: Some(ConversationConfig {
+                id: None,
+                previous_response_id: Some("resp_external".to_string()),
+            }),
+            ..Default::default()
+        });
+
+        let request = client
+            .build_request_body(&[UnifiedMessage::user("hello")], &[])
+            .expect("request body should build");
+
+        assert_eq!(
+            request.previous_response_id.as_deref(),
+            Some("resp_external")
+        );
+    }
+
+    #[test]
     fn test_build_request_body_disables_response_storage_by_default() {
         let client = build_test_client(OpenAIConfig::default());
 
@@ -1547,6 +1616,121 @@ mod tests {
             .expect("request body should build");
 
         assert_eq!(request.store, Some(false));
+    }
+
+    #[test]
+    fn test_build_request_body_includes_context_management_for_compaction() {
+        let client = build_test_client(OpenAIConfig {
+            compaction: Some(
+                crate::llm::compaction::CompactionConfig::with_trigger_tokens(120_000),
+            ),
+            ..Default::default()
+        });
+
+        let request = client
+            .build_request_body(&[UnifiedMessage::user("hello")], &[])
+            .expect("request body should build");
+
+        let entries = request
+            .context_management
+            .expect("context_management should be present");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].entry_type, "compaction");
+        assert_eq!(entries[0].compact_threshold, Some(120_000));
+    }
+
+    #[test]
+    fn test_build_request_body_clamps_compaction_threshold_to_openai_minimum() {
+        let client = build_test_client(OpenAIConfig {
+            compaction: Some(crate::llm::compaction::CompactionConfig::with_trigger_tokens(10)),
+            ..Default::default()
+        });
+
+        let request = client
+            .build_request_body(&[UnifiedMessage::user("hello")], &[])
+            .expect("request body should build");
+
+        let entries = request
+            .context_management
+            .expect("context_management should be present");
+        assert_eq!(entries[0].compact_threshold, Some(1_000));
+    }
+
+    #[test]
+    fn test_build_request_body_omits_context_management_when_disabled() {
+        let client = build_test_client(OpenAIConfig::default());
+
+        let request = client
+            .build_request_body(&[UnifiedMessage::user("hello")], &[])
+            .expect("request body should build");
+
+        assert!(request.context_management.is_none());
+    }
+
+    #[test]
+    fn test_build_request_body_replays_and_prunes_before_compaction_item() {
+        let client = build_test_client(OpenAIConfig::default());
+
+        let compacted_assistant = UnifiedMessage {
+            role: crate::llm::unified::UnifiedRole::Assistant,
+            content: vec![
+                crate::llm::unified::UnifiedContentBlock::Compaction {
+                    content: None,
+                    encrypted_content: Some("gAAAAAB-opaque".to_string()),
+                    id: Some("cmp_001".to_string()),
+                },
+                crate::llm::unified::UnifiedContentBlock::Text {
+                    text: "Continuing after compaction.".to_string(),
+                },
+            ],
+            id: Some("msg_after_compaction".to_string()),
+            timestamp: None,
+            reasoning: None,
+            reasoning_details: None,
+        };
+
+        let request = client
+            .build_request_body(
+                &[
+                    UnifiedMessage::system("Stay terse."),
+                    UnifiedMessage::user("Very old question"),
+                    UnifiedMessage::assistant("Very old answer"),
+                    compacted_assistant,
+                    UnifiedMessage::user("Fresh follow-up"),
+                ],
+                &[],
+            )
+            .expect("request body should build");
+
+        match request.input.expect("input must exist") {
+            ResponseInput::Structured(items) => {
+                // Pre-compaction transcript is pruned: the compaction item
+                // leads, followed by the assistant text and the new user turn.
+                assert!(matches!(
+                    &items[0],
+                    InputItem::Compaction {
+                        encrypted_content,
+                        id: Some(id),
+                    } if encrypted_content == "gAAAAAB-opaque" && id == "cmp_001"
+                ));
+                assert_eq!(items.len(), 3);
+                assert!(!items.iter().any(|item| matches!(
+                    item,
+                    InputItem::Message {
+                        role: MessageRole::User,
+                        content: MessageContent::Parts(parts),
+                        ..
+                    } if parts.iter().any(|part| matches!(
+                        part,
+                        ContentPart::InputText { text } if text == "Very old question"
+                    ))
+                )));
+            }
+            _ => panic!("expected structured input"),
+        }
+
+        // System prompt still travels via instructions
+        assert_eq!(request.instructions.as_deref(), Some("Stay terse."));
     }
 
     #[test]

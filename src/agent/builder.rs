@@ -161,6 +161,9 @@ pub struct AgentBuilder {
     required_completion_tools: Vec<Arc<dyn Tool>>,
     max_continuations: usize,
     continuation_message: Option<String>,
+
+    // Server-side context compaction configuration
+    compaction: Option<crate::llm::CompactionConfig>,
 }
 
 impl AgentBuilder {
@@ -225,6 +228,7 @@ impl AgentBuilder {
             required_completion_tools: Vec::new(),
             max_continuations: 2,
             continuation_message: None,
+            compaction: None,
         }
     }
 
@@ -1386,6 +1390,101 @@ impl AgentBuilder {
         self
     }
 
+    /// Enable provider-side automatic context compaction at a token threshold.
+    ///
+    /// Long-running agent sessions eventually outgrow the model's context
+    /// window. With auto-compaction enabled, the provider summarizes older
+    /// conversation content once the rendered context crosses
+    /// `trigger_tokens`, then continues from the compacted context. The
+    /// summary artifact is retained in session history and replayed
+    /// automatically on subsequent turns — no manual history management is
+    /// required, and the full pre-compaction transcript stays available in
+    /// appam's session record.
+    ///
+    /// Compaction is performed **server-side** by the provider, so there is
+    /// no extra client-side summarization request. Any tokens the provider
+    /// bills for the compaction pass are tracked in the session usage
+    /// (`AggregatedUsage::total_compaction_input_tokens` /
+    /// `total_compaction_output_tokens`) and included in cost accounting.
+    ///
+    /// # Supported providers
+    ///
+    /// - **Anthropic** (direct, AWS Bedrock, Azure Anthropic): threshold
+    ///   minimum 50,000 tokens (values below are clamped with a warning).
+    ///   Requires a compaction-capable model (Claude Sonnet 4.6+, Opus 4.6+,
+    ///   or the Claude 5 family).
+    /// - **OpenAI Responses** (direct, Azure OpenAI): threshold minimum
+    ///   1,000 tokens. Works with appam's default stateless mode.
+    ///
+    /// Providers without server-side compaction (OpenRouter, Vertex, OpenAI
+    /// Codex) ignore this setting; a warning is logged at session start.
+    ///
+    /// # Parameters
+    ///
+    /// - `trigger_tokens`: Input-token threshold at which the provider
+    ///   triggers compaction (e.g., `100_000`).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use appam::agent::AgentBuilder;
+    /// # use appam::llm::LlmProvider;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let agent = AgentBuilder::new("long-horizon-agent")
+    ///     .provider(LlmProvider::Anthropic)
+    ///     .model("claude-sonnet-4-6")
+    ///     .system_prompt("You are a coding agent.")
+    ///     .enable_auto_compaction(100_000)
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn enable_auto_compaction(mut self, trigger_tokens: u64) -> Self {
+        self.compaction = Some(crate::llm::CompactionConfig::with_trigger_tokens(
+            trigger_tokens,
+        ));
+        self
+    }
+
+    /// Set the full compaction configuration.
+    ///
+    /// Use this instead of [`Self::enable_auto_compaction`] when you need
+    /// custom summarization instructions (Anthropic only) or want to rely on
+    /// the provider-default trigger threshold.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use appam::agent::AgentBuilder;
+    /// # use appam::llm::CompactionConfig;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let agent = AgentBuilder::new("careful-agent")
+    ///     .model("claude-sonnet-4-6")
+    ///     .system_prompt("You are a coding agent.")
+    ///     .compaction(
+    ///         CompactionConfig::with_trigger_tokens(80_000)
+    ///             .instructions("Preserve code snippets, file paths, and open TODOs. \
+    ///                            Do not call any tools while writing this summary."),
+    ///     )
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn compaction(mut self, config: crate::llm::CompactionConfig) -> Self {
+        self.compaction = Some(config);
+        self
+    }
+
+    /// Disable automatic context compaction.
+    ///
+    /// Only needed to undo a previous [`Self::enable_auto_compaction`] or
+    /// [`Self::compaction`] call on the same builder; compaction is disabled
+    /// by default.
+    pub fn disable_auto_compaction(mut self) -> Self {
+        self.compaction = None;
+        self
+    }
+
     /// Build the agent from the configured builder.
     ///
     /// This validates the configuration and constructs a `RuntimeAgent`.
@@ -1501,6 +1600,7 @@ impl AgentBuilder {
             self.continuation_message,
             self.provider_parallel_tool_calls,
             self.max_concurrent_tool_executions,
+            self.compaction,
         );
 
         Ok(agent)

@@ -37,6 +37,7 @@ Appam is for agent systems that need more than a toy chat loop. It is designed f
 - **Typed tool system** using the `#[tool]` macro, direct `Tool` implementations, or `ClosureTool`
 - **Streaming by default** through `StreamBuilder`, `StreamConsumer`, and built-in consumers
 - **Durable sessions** with SQLite-backed `SessionHistory` and `continue_session(...)`
+- **Long-horizon context** via server-side auto-compaction (`enable_auto_compaction(...)`) on Anthropic, OpenAI, Bedrock, and Azure
 - **Traceable runs** through built-in JSONL traces and structured stream events
 - **Provider portability** across Anthropic, OpenAI, OpenAI Codex, OpenRouter, Vertex, Azure, and Bedrock
 - **Production controls** for retries, continuation mechanics, reasoning, caching, rate limiting, and provider-specific tuning

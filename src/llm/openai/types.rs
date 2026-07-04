@@ -108,6 +108,33 @@ pub struct ResponseCreateParams {
     /// Safety identifier
     #[serde(skip_serializing_if = "Option::is_none")]
     pub safety_identifier: Option<String>,
+
+    /// Server-side context management configuration.
+    ///
+    /// Currently only the `compaction` entry type is supported. When the
+    /// rendered token count crosses `compact_threshold`, the server compacts
+    /// the context into an encrypted `compaction` output item and continues
+    /// inference from the compacted window.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_management: Option<Vec<ContextManagementEntry>>,
+}
+
+/// One entry of the Responses API `context_management` array.
+///
+/// # Examples
+///
+/// ```json
+/// {"type": "compaction", "compact_threshold": 200000}
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextManagementEntry {
+    /// Entry type. Currently only `"compaction"` is supported.
+    #[serde(rename = "type")]
+    pub entry_type: String,
+
+    /// Token threshold at which compaction triggers (minimum 1,000).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compact_threshold: Option<u64>,
 }
 
 /// Input types for Responses API.
@@ -179,6 +206,19 @@ pub enum InputItem {
         /// Encrypted content (for stateless caching)
         #[serde(skip_serializing_if = "Option::is_none")]
         encrypted_content: Option<String>,
+    },
+
+    /// Compaction item (replayed from a previous compacted response).
+    ///
+    /// Carries the opaque encrypted summary of the compacted context. The
+    /// server resumes inference from this item and treats preceding input
+    /// items as prunable.
+    Compaction {
+        /// Opaque encrypted compaction summary
+        encrypted_content: String,
+        /// Optional item ID
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
     },
 }
 
@@ -365,6 +405,21 @@ pub enum OutputItem {
         summary: Vec<ReasoningContent>,
         /// Encrypted content
         #[serde(skip_serializing_if = "Option::is_none")]
+        encrypted_content: Option<String>,
+    },
+
+    /// Compaction item produced by server-side compaction.
+    ///
+    /// Emitted when the request's `context_management` threshold was crossed.
+    /// Must be replayed on subsequent stateless requests so the server can
+    /// resume from the compacted context. `encrypted_content` is optional
+    /// defensively so a malformed item cannot poison the terminal
+    /// `response.completed` event (which also carries usage).
+    Compaction {
+        /// Item ID (`cmp_...`)
+        id: String,
+        /// Opaque encrypted compaction summary
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         encrypted_content: Option<String>,
     },
 }
@@ -715,6 +770,64 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_response_with_compaction_output_item_deserializes() {
+        // A compaction item in `response.output` must not break parsing of
+        // the terminal response payload (which also carries usage).
+        let payload = serde_json::json!({
+            "id": "resp_123",
+            "created_at": 1764967971,
+            "object": "response",
+            "model": "gpt-5.5",
+            "status": "completed",
+            "output": [
+                {
+                    "id": "cmp_001",
+                    "type": "compaction",
+                    "encrypted_content": "gAAAAABpM0Yj-opaque="
+                },
+                {
+                    "id": "msg_001",
+                    "type": "message",
+                    "status": "completed",
+                    "role": "assistant",
+                    "content": [
+                        { "type": "output_text", "annotations": [], "text": "Done." }
+                    ]
+                }
+            ],
+            "usage": {
+                "input_tokens": 139,
+                "input_tokens_details": { "cached_tokens": 0 },
+                "output_tokens": 438,
+                "output_tokens_details": { "reasoning_tokens": 64 },
+                "total_tokens": 577
+            }
+        });
+
+        let response: Response =
+            serde_json::from_value(payload).expect("response with compaction item should parse");
+        assert!(matches!(
+            &response.output[0],
+            OutputItem::Compaction { id, encrypted_content: Some(content) }
+                if id == "cmp_001" && content == "gAAAAABpM0Yj-opaque="
+        ));
+        assert!(response.usage.is_some());
+    }
+
+    #[test]
+    fn test_compaction_input_item_serializes_with_type_tag() {
+        let item = InputItem::Compaction {
+            encrypted_content: "opaque-payload".to_string(),
+            id: Some("cmp_001".to_string()),
+        };
+
+        let json = serde_json::to_value(&item).expect("compaction item should serialize");
+        assert_eq!(json["type"], "compaction");
+        assert_eq!(json["encrypted_content"], "opaque-payload");
+        assert_eq!(json["id"], "cmp_001");
+    }
+
+    #[test]
     fn test_response_error_is_retryable_with_code() {
         let error = ResponseError {
             code: Some("internal_server_error".to_string()),
@@ -838,6 +951,8 @@ mod tests {
             cache_creation_input_tokens: None,
             cache_read_input_tokens: (cache_read_tokens > 0).then_some(cache_read_tokens),
             reasoning_tokens: (reasoning_tokens > 0).then_some(reasoning_tokens),
+            compaction_input_tokens: None,
+            compaction_output_tokens: None,
         };
 
         assert_eq!(unified.input_tokens, 1000);
@@ -877,6 +992,8 @@ mod tests {
             cache_creation_input_tokens: None,
             cache_read_input_tokens: (cache_read_tokens > 0).then_some(cache_read_tokens),
             reasoning_tokens: (reasoning_tokens > 0).then_some(reasoning_tokens),
+            compaction_input_tokens: None,
+            compaction_output_tokens: None,
         };
 
         // All fields should be zero or None when there's no usage

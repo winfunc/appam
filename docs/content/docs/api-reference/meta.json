@@ -32,6 +32,7 @@
     "vertex-config",
     "thinking-config",
     "caching-config",
+    "compaction-config",
     "reasoning-config",
     "pricing-usage",
     "error-handling",

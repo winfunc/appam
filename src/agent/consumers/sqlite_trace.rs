@@ -434,6 +434,15 @@ impl StreamConsumer for SqliteTraceConsumer {
                     "total_cache_creation_tokens": snapshot.total_cache_creation_tokens,
                     "total_cache_read_tokens": snapshot.total_cache_read_tokens,
                     "total_reasoning_tokens": snapshot.total_reasoning_tokens,
+                    "total_compaction_input_tokens": snapshot.total_compaction_input_tokens,
+                    "total_compaction_output_tokens": snapshot.total_compaction_output_tokens,
+                }),
+            ),
+            StreamEvent::Compaction { provider, summary } => (
+                "compaction",
+                json!({
+                    "provider": provider,
+                    "summary": summary,
                 }),
             ),
             StreamEvent::Done => (
@@ -748,6 +757,8 @@ impl StreamConsumer for SqliteTraceConsumer {
                     "total_cache_creation_tokens": snapshot.total_cache_creation_tokens,
                     "total_cache_read_tokens": snapshot.total_cache_read_tokens,
                     "total_reasoning_tokens": snapshot.total_reasoning_tokens,
+                    "total_compaction_input_tokens": snapshot.total_compaction_input_tokens,
+                    "total_compaction_output_tokens": snapshot.total_compaction_output_tokens,
                 });
 
                 rt.spawn(async move {
@@ -766,6 +777,35 @@ impl StreamConsumer for SqliteTraceConsumer {
 
                     if let Err(error) = consumer.write_entry("usage_update", event_data).await {
                         consumer.warn_trace_persistence_failure("write_usage_update", &error);
+                    }
+                });
+            }
+
+            StreamEvent::Compaction { provider, summary } => {
+                let event_data = json!({
+                    "provider": provider,
+                    "summary": summary,
+                });
+                rt.spawn(async move {
+                    let consumer = SqliteTraceConsumer {
+                        pool,
+                        session_id,
+                        agent_name,
+                        model,
+                        job_type,
+                        job_version,
+                        start_time,
+                        sequence_counter,
+                        events,
+                        pending_event,
+                    };
+                    // Flush pending so the compaction row lands at the right
+                    // position in the event sequence
+                    if let Err(e) = consumer.flush_pending_event().await {
+                        consumer.warn_trace_persistence_failure("flush_pending_event", &e);
+                    }
+                    if let Err(e) = consumer.write_entry("compaction", event_data).await {
+                        consumer.warn_trace_persistence_failure("write_compaction", &e);
                     }
                 });
             }
@@ -1229,6 +1269,8 @@ mod tests {
                     total_cache_creation_tokens: 3,
                     total_cache_read_tokens: 4,
                     total_reasoning_tokens: 5,
+                    total_compaction_input_tokens: 0,
+                    total_compaction_output_tokens: 0,
                     total_cost_usd: 0.75,
                     request_count: 2,
                 },
@@ -1282,6 +1324,8 @@ mod tests {
                     total_cache_creation_tokens: 0,
                     total_cache_read_tokens: 0,
                     total_reasoning_tokens: 0,
+                    total_compaction_input_tokens: 0,
+                    total_compaction_output_tokens: 0,
                     total_cost_usd: 1.23,
                     request_count: 1,
                 },
