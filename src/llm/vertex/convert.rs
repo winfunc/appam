@@ -278,6 +278,7 @@ mod tests {
                     input: serde_json::json!({"query": "vertex"}),
                 },
                 UnifiedContentBlock::Thinking {
+                    id: None,
                     thinking: String::new(),
                     signature: Some("sig-tool-1".to_string()),
                     encrypted_content: None,

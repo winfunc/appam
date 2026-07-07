@@ -322,6 +322,14 @@ pub enum UnifiedContentBlock {
     /// - **Anthropic**: Thinking blocks include cryptographic signatures for verification
     /// - **OpenRouter**: Reasoning may be encrypted, with summary provided
     Thinking {
+        /// Provider-native reasoning item identifier, when exposed.
+        ///
+        /// OpenAI Responses encrypted reasoning payloads are bound to the
+        /// original `rs_...` item id. Replaying the encrypted payload under a
+        /// generated id causes provider verification to fail, so callers must
+        /// preserve this value when using stateless OpenAI reasoning replay.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
         /// Reasoning content (may be summarized)
         thinking: String,
         /// Optional signature for verification (Anthropic-specific)
@@ -614,12 +622,14 @@ mod tests {
             role: UnifiedRole::Assistant,
             content: vec![
                 UnifiedContentBlock::Thinking {
+                    id: None,
                     thinking: "Step 1".to_string(),
                     signature: None,
                     encrypted_content: None,
                     redacted: false,
                 },
                 UnifiedContentBlock::Thinking {
+                    id: None,
                     thinking: "Step 2".to_string(),
                     signature: None,
                     encrypted_content: None,

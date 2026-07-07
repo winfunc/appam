@@ -1707,6 +1707,7 @@ impl AnthropicClient {
                             // Thinking block complete - emit with signature preserved
                             let unified_block =
                                 crate::llm::unified::UnifiedContentBlock::Thinking {
+                                    id: None,
                                     thinking,
                                     signature: Some(signature),
                                     encrypted_content: None,
@@ -1718,6 +1719,7 @@ impl AnthropicClient {
                             // Redacted thinking block - emit as redacted
                             let unified_block =
                                 crate::llm::unified::UnifiedContentBlock::Thinking {
+                                    id: None,
                                     thinking: data,
                                     signature: None,
                                     encrypted_content: None,

@@ -85,6 +85,7 @@ impl StreamState {
 
         if let Some(signature) = self.text_signature.take() {
             self.content_blocks.push(UnifiedContentBlock::Thinking {
+                id: None,
                 thinking: String::new(),
                 signature: Some(signature),
                 encrypted_content: None,
@@ -235,6 +236,7 @@ impl StreamState {
 
         if let Some(signature) = call.signature.clone() {
             self.content_blocks.push(UnifiedContentBlock::Thinking {
+                id: None,
                 thinking: String::new(),
                 signature: Some(signature),
                 encrypted_content: None,
@@ -559,6 +561,7 @@ impl VertexClient {
                 }
 
                 state.content_blocks.push(UnifiedContentBlock::Thinking {
+                    id: None,
                     thinking: text.to_string(),
                     signature: part.thought_signature.clone(),
                     encrypted_content: None,

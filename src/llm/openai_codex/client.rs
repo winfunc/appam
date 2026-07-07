@@ -641,6 +641,7 @@ impl CodexStreamState {
                     {
                         if !thinking.is_empty() {
                             blocks.push(UnifiedContentBlock::Thinking {
+                                id: None,
                                 thinking: thinking.clone(),
                                 signature: None,
                                 encrypted_content: None,
@@ -1062,9 +1063,11 @@ fn prepare_codex_messages(messages: &[UnifiedMessage]) -> Vec<UnifiedMessage> {
                 .iter()
                 .filter_map(|block| match block {
                     UnifiedContentBlock::Thinking {
+                        id,
                         encrypted_content: Some(encrypted_content),
                         ..
                     } => Some(UnifiedContentBlock::Thinking {
+                        id: id.clone(),
                         thinking: String::new(),
                         signature: None,
                         encrypted_content: Some(encrypted_content.clone()),

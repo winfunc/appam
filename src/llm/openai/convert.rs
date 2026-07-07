@@ -3,13 +3,12 @@
 //! Provides bidirectional conversion functions to translate between the
 //! appam unified message format and OpenAI's specific request/response structures.
 
-use serde_json::json;
-use uuid::Uuid;
-
 use super::types::*;
 use crate::llm::unified::{
     UnifiedContentBlock, UnifiedMessage, UnifiedRole, UnifiedTool, UnifiedToolCall,
 };
+use serde_json::json;
+use uuid::Uuid;
 
 /// Convert unified messages to OpenAI input format.
 ///
@@ -183,14 +182,23 @@ fn message_to_input_items(msg: &UnifiedMessage) -> Vec<InputItem> {
                 tool_results.push((tool_use_id.clone(), content.clone()));
             }
             UnifiedContentBlock::Thinking {
-                encrypted_content, ..
+                id,
+                encrypted_content,
+                ..
             } => {
-                if msg.role == UnifiedRole::Assistant && encrypted_content.is_some() {
+                if msg.role == UnifiedRole::Assistant {
+                    let Some(encrypted_content) = encrypted_content else {
+                        continue;
+                    };
+                    let Some(id) = id else {
+                        continue;
+                    };
+
                     reasoning_items.push(InputItem::Reasoning {
-                        id: format!("rs_{}", Uuid::new_v4().simple()),
+                        id: id.clone(),
                         content: Vec::new(),
                         summary: Vec::new(),
-                        encrypted_content: encrypted_content.clone(),
+                        encrypted_content: Some(encrypted_content.clone()),
                     });
                 }
             }
@@ -396,6 +404,7 @@ pub fn to_unified_content_blocks(output_items: &[OutputItem]) -> Vec<UnifiedCont
                 });
             }
             OutputItem::Reasoning {
+                id,
                 content,
                 summary,
                 encrypted_content,
@@ -416,9 +425,10 @@ pub fn to_unified_content_blocks(output_items: &[OutputItem]) -> Vec<UnifiedCont
                     }
                 }
 
-                if !reasoning_parts.is_empty() {
+                if !reasoning_parts.is_empty() || encrypted_content.is_some() {
                     blocks.push(UnifiedContentBlock::Thinking {
                         thinking: reasoning_parts.join("\n"),
+                        id: Some(id.clone()),
                         signature: None,
                         encrypted_content: encrypted_content.clone(),
                         redacted: false,
@@ -573,6 +583,7 @@ mod tests {
             &[UnifiedMessage {
                 role: UnifiedRole::Assistant,
                 content: vec![UnifiedContentBlock::Thinking {
+                    id: Some("rs_123".to_string()),
                     thinking: "Step 1".to_string(),
                     signature: None,
                     encrypted_content: Some("enc_reasoning_blob".to_string()),
@@ -591,10 +602,12 @@ mod tests {
                 assert_eq!(items.len(), 1);
                 match &items[0] {
                     InputItem::Reasoning {
+                        id,
                         content,
                         encrypted_content,
                         ..
                     } => {
+                        assert_eq!(id, "rs_123");
                         assert_eq!(encrypted_content.as_deref(), Some("enc_reasoning_blob"));
                         assert!(content.is_empty());
                     }
@@ -611,6 +624,7 @@ mod tests {
             &[UnifiedMessage {
                 role: UnifiedRole::Assistant,
                 content: vec![UnifiedContentBlock::Thinking {
+                    id: Some("rs_123".to_string()),
                     thinking: "Step 1".to_string(),
                     signature: None,
                     encrypted_content: None,
@@ -627,6 +641,57 @@ mod tests {
         match input {
             ResponseInput::Structured(items) => assert!(items.is_empty()),
             _ => panic!("Expected Structured input"),
+        }
+    }
+
+    #[test]
+    fn test_from_unified_messages_drops_encrypted_reasoning_without_item_id() {
+        let input = from_unified_messages(
+            &[UnifiedMessage {
+                role: UnifiedRole::Assistant,
+                content: vec![UnifiedContentBlock::Thinking {
+                    id: None,
+                    thinking: "Step 1".to_string(),
+                    signature: None,
+                    encrypted_content: Some("enc_reasoning_blob".to_string()),
+                    redacted: false,
+                }],
+                id: Some("msg_1".to_string()),
+                timestamp: None,
+                reasoning: None,
+                reasoning_details: None,
+            }],
+            None,
+        );
+
+        match input {
+            ResponseInput::Structured(items) => assert!(items.is_empty()),
+            _ => panic!("Expected Structured input"),
+        }
+    }
+
+    #[test]
+    fn test_to_unified_content_blocks_preserves_reasoning_item_id() {
+        let blocks = to_unified_content_blocks(&[OutputItem::Reasoning {
+            id: "rs_123".to_string(),
+            content: Vec::new(),
+            summary: Vec::new(),
+            encrypted_content: Some("enc_reasoning_blob".to_string()),
+        }]);
+
+        assert_eq!(blocks.len(), 1);
+        match &blocks[0] {
+            UnifiedContentBlock::Thinking {
+                id,
+                thinking,
+                encrypted_content,
+                ..
+            } => {
+                assert_eq!(id.as_deref(), Some("rs_123"));
+                assert!(thinking.is_empty());
+                assert_eq!(encrypted_content.as_deref(), Some("enc_reasoning_blob"));
+            }
+            _ => panic!("Expected thinking block"),
         }
     }
 }

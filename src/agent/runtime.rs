@@ -2328,6 +2328,7 @@ fn chat_messages_to_unified(messages: &[ChatMessage]) -> Vec<UnifiedMessage> {
             // Add reasoning if present (legacy - no signature)
             if let Some(ref reasoning) = msg.reasoning {
                 content_blocks.push(crate::llm::UnifiedContentBlock::Thinking {
+                    id: None,
                     thinking: reasoning.clone(),
                     signature: None,
                     encrypted_content: None,

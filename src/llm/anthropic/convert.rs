@@ -430,6 +430,7 @@ pub fn to_unified_content_block(block: &ContentBlock) -> UnifiedContentBlock {
             thinking,
             signature,
         } => UnifiedContentBlock::Thinking {
+            id: None,
             thinking: thinking.clone(),
             signature: Some(signature.clone()),
             encrypted_content: None,
@@ -437,6 +438,7 @@ pub fn to_unified_content_block(block: &ContentBlock) -> UnifiedContentBlock {
         },
 
         ContentBlock::RedactedThinking { data } => UnifiedContentBlock::Thinking {
+            id: None,
             thinking: data.clone(),
             signature: None,
             encrypted_content: None,
@@ -735,6 +737,7 @@ mod tests {
     #[test]
     fn test_thinking_block_conversion() {
         let unified_block = UnifiedContentBlock::Thinking {
+            id: None,
             thinking: "Let me think...".to_string(),
             signature: Some("sig123".to_string()),
             encrypted_content: None,
@@ -757,6 +760,7 @@ mod tests {
     #[test]
     fn test_redacted_thinking_conversion() {
         let unified_block = UnifiedContentBlock::Thinking {
+            id: None,
             thinking: "encrypted_data_here".to_string(),
             signature: None,
             encrypted_content: None,
