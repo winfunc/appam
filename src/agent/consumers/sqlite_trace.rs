@@ -12,7 +12,7 @@ use serde_json::json;
 #[allow(unused_imports)]
 use sqlx::Row;
 use sqlx::SqlitePool;
-use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::{Mutex as AsyncMutex, Notify};
 use tracing::warn;
 
 use super::super::streaming::{StreamConsumer, StreamEvent};
@@ -69,6 +69,9 @@ pub struct SqliteTraceConsumer {
     sequence_counter: Arc<Mutex<i64>>,
     events: Arc<Mutex<Vec<serde_json::Value>>>,
     pending_event: Arc<AsyncMutex<Option<PendingEvent>>>,
+    persistence_sequence_counter: Arc<Mutex<i64>>,
+    next_persistence_sequence: Arc<AsyncMutex<i64>>,
+    persistence_sequence_notify: Arc<Notify>,
 }
 
 impl SqliteTraceConsumer {
@@ -101,6 +104,9 @@ impl SqliteTraceConsumer {
             sequence_counter: Arc::new(Mutex::new(0)),
             events: Arc::new(Mutex::new(Vec::new())),
             pending_event: Arc::new(AsyncMutex::new(None)),
+            persistence_sequence_counter: Arc::new(Mutex::new(0)),
+            next_persistence_sequence: Arc::new(AsyncMutex::new(0)),
+            persistence_sequence_notify: Arc::new(Notify::new()),
         }
     }
 
@@ -149,6 +155,88 @@ impl SqliteTraceConsumer {
             "type": event_type,
             "data": data,
         }));
+    }
+
+    /// Reserve the next background persistence slot.
+    ///
+    /// `on_event` is synchronous, but SQLite writes are asynchronous. Assigning
+    /// an enqueue-order slot before spawning each write task lets the task body
+    /// process events in stream order even when the runtime starts later tasks
+    /// first under load. The ordering is separate from persisted trace sequence
+    /// numbers because content and reasoning chunks may be consolidated into a
+    /// single database row.
+    fn reserve_persistence_sequence(&self) -> i64 {
+        let mut counter = self.persistence_sequence_counter.lock().unwrap();
+        let sequence_number = *counter;
+        *counter += 1;
+        sequence_number
+    }
+
+    /// Wait until the given persistence slot is allowed to run.
+    ///
+    /// The notification future is created before checking the current slot so a
+    /// wakeup cannot be missed between observing another task's turn and waiting
+    /// for progress.
+    async fn wait_for_persistence_sequence(&self, sequence_number: i64) {
+        loop {
+            let notified = self.persistence_sequence_notify.notified();
+            {
+                let next_sequence = self.next_persistence_sequence.lock().await;
+                if *next_sequence == sequence_number {
+                    return;
+                }
+            }
+            notified.await;
+        }
+    }
+
+    /// Mark the current persistence slot complete and wake the next waiter.
+    async fn finish_persistence_sequence(&self) {
+        {
+            let mut next_sequence = self.next_persistence_sequence.lock().await;
+            *next_sequence += 1;
+        }
+        self.persistence_sequence_notify.notify_waiters();
+    }
+
+    /// Run a spawned persistence operation in the original stream event order.
+    async fn run_ordered_persistence_task<F, Fut>(&self, sequence_number: i64, operation: F)
+    where
+        F: FnOnce(Self) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = ()> + Send + 'static,
+    {
+        self.wait_for_persistence_sequence(sequence_number).await;
+        operation(self.clone()).await;
+        self.finish_persistence_sequence().await;
+    }
+
+    /// Spawn a persistence operation that runs in stream event order.
+    ///
+    /// The method reserves the slot synchronously before spawning so the order is
+    /// the caller's `on_event` order, not the scheduler's task start order.
+    fn spawn_ordered_persistence_task<F, Fut>(&self, rt: &tokio::runtime::Handle, operation: F)
+    where
+        F: FnOnce(Self) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = ()> + Send + 'static,
+    {
+        let consumer = self.clone();
+        let sequence_number = consumer.reserve_persistence_sequence();
+        rt.spawn(async move {
+            consumer
+                .run_ordered_persistence_task(sequence_number, operation)
+                .await;
+        });
+    }
+
+    /// Wait until all previously submitted persistence work has completed.
+    ///
+    /// Tests use this instead of sleeping so assertions observe a deterministic
+    /// drain point after the stream events they submitted.
+    #[cfg(test)]
+    async fn wait_for_persistence_idle(&self) {
+        let sequence_number = self.reserve_persistence_sequence();
+        self.wait_for_persistence_sequence(sequence_number).await;
+        self.finish_persistence_sequence().await;
     }
 
     /// Emit a structured warning for trace persistence failures.
@@ -360,18 +448,6 @@ impl StreamConsumer for SqliteTraceConsumer {
         let rt = tokio::runtime::Handle::try_current()
             .context("No tokio runtime available for SqliteTraceConsumer")?;
 
-        // Clone necessary data for spawning
-        let pool = Arc::clone(&self.pool);
-        let session_id = self.session_id.clone();
-        let agent_name = self.agent_name.clone();
-        let model = self.model.clone();
-        let job_type = self.job_type.clone();
-        let job_version = self.job_version;
-        let start_time = self.start_time;
-        let sequence_counter = Arc::clone(&self.sequence_counter);
-        let events = Arc::clone(&self.events);
-        let pending_event = Arc::clone(&self.pending_event);
-
         let (snapshot_type, snapshot_data) = match event {
             StreamEvent::SessionStarted { session_id } => (
                 "session_started",
@@ -482,19 +558,7 @@ impl StreamConsumer for SqliteTraceConsumer {
                 session_id: event_session_id,
             } => {
                 let event_session_id = event_session_id.clone();
-                rt.spawn(async move {
-                    let consumer = SqliteTraceConsumer {
-                        pool,
-                        session_id,
-                        agent_name,
-                        model,
-                        job_type,
-                        job_version,
-                        start_time,
-                        sequence_counter,
-                        events,
-                        pending_event,
-                    };
+                self.spawn_ordered_persistence_task(&rt, move |consumer| async move {
                     // Flush pending before writing non-streaming event
                     if let Err(e) = consumer.flush_pending_event().await {
                         consumer.warn_trace_persistence_failure("flush_pending_event", &e);
@@ -515,19 +579,7 @@ impl StreamConsumer for SqliteTraceConsumer {
 
             StreamEvent::Content { content } => {
                 let content = content.clone();
-                rt.spawn(async move {
-                    let consumer = SqliteTraceConsumer {
-                        pool,
-                        session_id,
-                        agent_name,
-                        model,
-                        job_type,
-                        job_version,
-                        start_time,
-                        sequence_counter,
-                        events,
-                        pending_event,
-                    };
+                self.spawn_ordered_persistence_task(&rt, move |consumer| async move {
                     // Use accumulation for streaming content
                     if let Err(e) = consumer
                         .accumulate_or_flush(
@@ -545,19 +597,7 @@ impl StreamConsumer for SqliteTraceConsumer {
 
             StreamEvent::Reasoning { content } => {
                 let content = content.clone();
-                rt.spawn(async move {
-                    let consumer = SqliteTraceConsumer {
-                        pool,
-                        session_id,
-                        agent_name,
-                        model,
-                        job_type,
-                        job_version,
-                        start_time,
-                        sequence_counter,
-                        events,
-                        pending_event,
-                    };
+                self.spawn_ordered_persistence_task(&rt, move |consumer| async move {
                     // Use accumulation for streaming reasoning
                     if let Err(e) = consumer
                         .accumulate_or_flush(
@@ -579,19 +619,7 @@ impl StreamConsumer for SqliteTraceConsumer {
             } => {
                 let tool_name = tool_name.clone();
                 let arguments = arguments.clone();
-                rt.spawn(async move {
-                    let consumer = SqliteTraceConsumer {
-                        pool,
-                        session_id,
-                        agent_name,
-                        model,
-                        job_type,
-                        job_version,
-                        start_time,
-                        sequence_counter,
-                        events,
-                        pending_event,
-                    };
+                self.spawn_ordered_persistence_task(&rt, move |consumer| async move {
                     // Flush pending before writing non-streaming event
                     if let Err(e) = consumer.flush_pending_event().await {
                         consumer.warn_trace_persistence_failure("flush_pending_event", &e);
@@ -621,19 +649,7 @@ impl StreamConsumer for SqliteTraceConsumer {
                 let result = result.clone();
                 let success = *success;
                 let duration_ms = *duration_ms;
-                rt.spawn(async move {
-                    let consumer = SqliteTraceConsumer {
-                        pool,
-                        session_id,
-                        agent_name,
-                        model,
-                        job_type,
-                        job_version,
-                        start_time,
-                        sequence_counter,
-                        events,
-                        pending_event,
-                    };
+                self.spawn_ordered_persistence_task(&rt, move |consumer| async move {
                     // Flush pending before writing non-streaming event
                     if let Err(e) = consumer.flush_pending_event().await {
                         consumer.warn_trace_persistence_failure("flush_pending_event", &e);
@@ -658,19 +674,7 @@ impl StreamConsumer for SqliteTraceConsumer {
             StreamEvent::ToolCallFailed { tool_name, error } => {
                 let tool_name = tool_name.clone();
                 let error = error.clone();
-                rt.spawn(async move {
-                    let consumer = SqliteTraceConsumer {
-                        pool,
-                        session_id,
-                        agent_name,
-                        model,
-                        job_type,
-                        job_version,
-                        start_time,
-                        sequence_counter,
-                        events,
-                        pending_event,
-                    };
+                self.spawn_ordered_persistence_task(&rt, move |consumer| async move {
                     // Flush pending before writing non-streaming event
                     if let Err(e) = consumer.flush_pending_event().await {
                         consumer.warn_trace_persistence_failure("flush_pending_event", &e);
@@ -691,19 +695,7 @@ impl StreamConsumer for SqliteTraceConsumer {
             }
 
             StreamEvent::TurnCompleted => {
-                rt.spawn(async move {
-                    let consumer = SqliteTraceConsumer {
-                        pool,
-                        session_id,
-                        agent_name,
-                        model,
-                        job_type,
-                        job_version,
-                        start_time,
-                        sequence_counter,
-                        events,
-                        pending_event,
-                    };
+                self.spawn_ordered_persistence_task(&rt, move |consumer| async move {
                     // Flush pending at turn boundary
                     if let Err(e) = consumer.flush_pending_event().await {
                         consumer.warn_trace_persistence_failure("flush_pending_event", &e);
@@ -716,19 +708,7 @@ impl StreamConsumer for SqliteTraceConsumer {
 
             StreamEvent::Done => {
                 let total_elapsed_ms = self.start_time.elapsed().as_secs_f64() * 1000.0;
-                rt.spawn(async move {
-                    let consumer = SqliteTraceConsumer {
-                        pool,
-                        session_id,
-                        agent_name,
-                        model,
-                        job_type,
-                        job_version,
-                        start_time,
-                        sequence_counter,
-                        events,
-                        pending_event,
-                    };
+                self.spawn_ordered_persistence_task(&rt, move |consumer| async move {
                     // Flush pending before writing final event
                     if let Err(e) = consumer.flush_pending_event().await {
                         consumer.warn_trace_persistence_failure("flush_pending_event", &e);
@@ -761,20 +741,7 @@ impl StreamConsumer for SqliteTraceConsumer {
                     "total_compaction_output_tokens": snapshot.total_compaction_output_tokens,
                 });
 
-                rt.spawn(async move {
-                    let consumer = SqliteTraceConsumer {
-                        pool,
-                        session_id,
-                        agent_name,
-                        model,
-                        job_type,
-                        job_version,
-                        start_time,
-                        sequence_counter,
-                        events,
-                        pending_event,
-                    };
-
+                self.spawn_ordered_persistence_task(&rt, move |consumer| async move {
                     if let Err(error) = consumer.write_entry("usage_update", event_data).await {
                         consumer.warn_trace_persistence_failure("write_usage_update", &error);
                     }
@@ -786,19 +753,7 @@ impl StreamConsumer for SqliteTraceConsumer {
                     "provider": provider,
                     "summary": summary,
                 });
-                rt.spawn(async move {
-                    let consumer = SqliteTraceConsumer {
-                        pool,
-                        session_id,
-                        agent_name,
-                        model,
-                        job_type,
-                        job_version,
-                        start_time,
-                        sequence_counter,
-                        events,
-                        pending_event,
-                    };
+                self.spawn_ordered_persistence_task(&rt, move |consumer| async move {
                     // Flush pending so the compaction row lands at the right
                     // position in the event sequence
                     if let Err(e) = consumer.flush_pending_event().await {
@@ -828,19 +783,7 @@ impl StreamConsumer for SqliteTraceConsumer {
                 let request_payload = request_payload.clone();
                 let response_payload = response_payload.clone();
                 let provider_response_id = provider_response_id.clone();
-                rt.spawn(async move {
-                    let consumer = SqliteTraceConsumer {
-                        pool,
-                        session_id,
-                        agent_name,
-                        model,
-                        job_type,
-                        job_version,
-                        start_time,
-                        sequence_counter,
-                        events,
-                        pending_event,
-                    };
+                self.spawn_ordered_persistence_task(&rt, move |consumer| async move {
                     // Flush pending before writing error event
                     if let Err(e) = consumer.flush_pending_event().await {
                         consumer.warn_trace_persistence_failure("flush_pending_event", &e);
@@ -944,8 +887,7 @@ mod tests {
 
         consumer.on_event(&StreamEvent::Done).unwrap();
 
-        // Wait for async tasks to complete
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        consumer.wait_for_persistence_idle().await;
 
         // Verify events were written
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_traces")
@@ -1018,7 +960,7 @@ mod tests {
             .unwrap();
         consumer.on_event(&StreamEvent::Done).unwrap();
 
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        consumer.wait_for_persistence_idle().await;
 
         let rows = sqlx::query(
             "SELECT event_type, sequence_number FROM agent_traces ORDER BY sequence_number",
@@ -1070,8 +1012,7 @@ mod tests {
         // Send a different event type to trigger flush
         consumer.on_event(&StreamEvent::Done).unwrap();
 
-        // Wait for async tasks to complete
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        consumer.wait_for_persistence_idle().await;
 
         // Verify only 2 events written (1 consolidated content + 1 done)
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_traces")
@@ -1132,8 +1073,7 @@ mod tests {
             })
             .unwrap();
 
-        // Wait for async tasks to complete
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        consumer.wait_for_persistence_idle().await;
 
         // Verify 2 events written (1 consolidated reasoning + 1 tool_call_started)
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_traces")
@@ -1183,33 +1123,28 @@ mod tests {
                 content: "First ".to_string(),
             })
             .unwrap();
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
         consumer
             .on_event(&StreamEvent::Content {
                 content: "content".to_string(),
             })
             .unwrap();
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
         consumer
             .on_event(&StreamEvent::Reasoning {
                 content: "Thinking".to_string(),
             })
             .unwrap();
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
         consumer
             .on_event(&StreamEvent::Content {
                 content: "Second content".to_string(),
             })
             .unwrap();
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
         consumer.on_event(&StreamEvent::Done).unwrap();
 
-        // Wait for async tasks to complete (longer delay for multiple operations)
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        consumer.wait_for_persistence_idle().await;
 
         // Verify 4 events written (content + reasoning + content + done)
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_traces")
@@ -1277,7 +1212,7 @@ mod tests {
             })
             .unwrap();
 
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        consumer.wait_for_persistence_idle().await;
 
         let row = sqlx::query(
             "SELECT model, event_data FROM agent_traces WHERE event_type = 'usage_update' LIMIT 1",
@@ -1314,7 +1249,6 @@ mod tests {
                 session_id: "usage-sequence-session".to_string(),
             })
             .unwrap();
-        tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
 
         consumer
             .on_event(&StreamEvent::UsageUpdate {
@@ -1331,10 +1265,9 @@ mod tests {
                 },
             })
             .unwrap();
-        tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
 
         consumer.on_event(&StreamEvent::Done).unwrap();
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        consumer.wait_for_persistence_idle().await;
 
         let rows = sqlx::query(
             "SELECT event_type, sequence_number FROM agent_traces ORDER BY sequence_number",
