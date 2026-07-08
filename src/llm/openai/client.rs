@@ -203,7 +203,7 @@ fn build_http1_fallback_client(config: &OpenAIConfig) -> Result<reqwest::Client>
         .tcp_keepalive(Duration::from_secs(60))
         .tcp_nodelay(true)
         .gzip(true)
-        .user_agent("appam/0.1.1");
+        .user_agent(concat!("appam/", env!("CARGO_PKG_VERSION")));
 
     if let Some(addrs) = resolve_host_for_http1(host, port) {
         builder = builder.resolve_to_addrs(host, addrs.as_slice());
@@ -298,7 +298,7 @@ impl OpenAIClient {
                 .tcp_keepalive(Duration::from_secs(60))
                 .tcp_nodelay(true)
                 .gzip(true)
-                .user_agent("appam/0.1.1");
+                .user_agent(concat!("appam/", env!("CARGO_PKG_VERSION")));
 
             if let Some(addrs) = ctx.resolved_addrs() {
                 builder = builder.resolve_to_addrs(ctx.host(), addrs);
