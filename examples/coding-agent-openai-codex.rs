@@ -20,7 +20,6 @@ use appam::llm::openai_codex::{
 };
 use appam::prelude::*;
 use rustyline::DefaultEditor;
-use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -278,6 +277,7 @@ async fn main() -> Result<()> {
     println!("✓ Type 'exit', 'quit', or 'bye' to end conversation\n");
 
     let mut rl = DefaultEditor::new()?;
+    let mut messages: Option<Vec<ChatMessage>> = None;
 
     loop {
         let readline = rl.readline("You> ");
@@ -301,45 +301,24 @@ async fn main() -> Result<()> {
 
                 println!("\nAssistant:\n");
 
-                let reasoning_shown = Arc::new(std::sync::atomic::AtomicBool::new(false));
-                let reasoning_shown_clone = Arc::clone(&reasoning_shown);
+                let turn_messages = match messages.as_ref() {
+                    Some(previous) => {
+                        let mut turn_messages = previous.clone();
+                        turn_messages.push(ChatMessage::user(input));
+                        turn_messages
+                    }
+                    None => agent.initial_messages(input)?,
+                };
+                let turn_result = appam::agent::runtime::default_run_streaming_with_messages(
+                    &agent,
+                    turn_messages,
+                    Box::new(ConsoleConsumer::new()),
+                )
+                .await;
 
-                match agent
-                    .stream(input)
-                    .on_content(|content| {
-                        print!("{}", content);
-                        std::io::stdout().flush().ok();
-                    })
-                    .on_reasoning(move |content| {
-                        if !reasoning_shown_clone.load(std::sync::atomic::Ordering::Relaxed) {
-                            println!("\n\n💭 Reasoning:\n");
-                            reasoning_shown_clone.store(true, std::sync::atomic::Ordering::Relaxed);
-                        }
-                        print!("{}", content);
-                        std::io::stdout().flush().ok();
-                    })
-                    .on_tool_call(|tool_name, arguments| {
-                        println!("\n\n🔧 {}", tool_name);
-                        let args_str = arguments.to_string();
-                        if args_str.len() > 200 {
-                            println!("   Args: {}...", &args_str[..200]);
-                        } else {
-                            println!("   Args: {}", args_str);
-                        }
-                    })
-                    .on_tool_result(|tool_name, result| {
-                        println!("   ✓ {} completed", tool_name);
-                        let result_str = serde_json::to_string_pretty(&result).unwrap_or_default();
-                        if result_str.len() > 300 {
-                            println!("   Result: {}...", &result_str[..300]);
-                        } else {
-                            println!("   Result: {}", result_str);
-                        }
-                    })
-                    .run()
-                    .await
-                {
-                    Ok(_) => {
+                match turn_result {
+                    Ok(session) => {
+                        messages = Some(session.messages);
                         println!("\n");
                     }
                     Err(error) => {

@@ -43,7 +43,8 @@ If an unrecoverable error occurs at any point, an `Error` event is emitted inste
 
 ## The StreamBuilder API
 
-The most ergonomic way to handle streaming events is the closure-based `StreamBuilder`, accessed via `agent.stream()`:
+The most ergonomic way to handle a one-shot streamed turn is the closure-based
+`StreamBuilder`, accessed via `agent.stream()`:
 
 ```rust
 use appam::prelude::*;
@@ -86,6 +87,44 @@ let session = agent
 ```
 
 All handlers are optional -- register only the ones you need. The builder returns a `Session` on completion.
+
+`agent.stream(prompt).run()` starts from that prompt each time. It does not
+store hidden chat state inside the agent. For a readline loop, keep the returned
+`Session.messages` and pass the updated transcript into the next turn.
+
+## Interactive Multi-Turn Loops
+
+Use `default_run_streaming_with_messages(...)` when your application already
+owns the conversation transcript:
+
+```rust
+use appam::prelude::*;
+
+let mut messages: Option<Vec<ChatMessage>> = None;
+
+let input = "What did I ask first?";
+let turn_messages = match messages.as_ref() {
+    Some(previous) => {
+        let mut turn_messages = previous.clone();
+        turn_messages.push(ChatMessage::user(input));
+        turn_messages
+    }
+    None => agent.initial_messages(input)?,
+};
+
+let session = appam::agent::runtime::default_run_streaming_with_messages(
+    &agent,
+    turn_messages,
+    Box::new(ConsoleConsumer::new()),
+)
+.await?;
+
+messages = Some(session.messages);
+```
+
+The coding-agent examples use this pattern so each file stays standalone while
+still preserving prior user turns, assistant messages, tool calls, and tool
+results.
 
 ### Available Handlers
 

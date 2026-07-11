@@ -121,6 +121,40 @@ println!("Total messages: {}", continued.messages.len());
 
 Session continuation requires [SessionHistory](/docs/api-reference/session-history) to be enabled so previous messages can be loaded from the database.
 
+## In-Memory Continuation
+
+For a single-process terminal chat, you do not need SQLite history. Keep the
+latest `Session.messages`, append the next user prompt, and run the next turn
+with `default_run_streaming_with_messages(...)`:
+
+```rust
+use appam::prelude::*;
+
+let mut messages: Option<Vec<ChatMessage>> = None;
+
+let input = "What did I ask first?";
+let turn_messages = match messages.as_ref() {
+    Some(previous) => {
+        let mut turn_messages = previous.clone();
+        turn_messages.push(ChatMessage::user(input));
+        turn_messages
+    }
+    None => agent.initial_messages(input)?,
+};
+
+let session = appam::agent::runtime::default_run_streaming_with_messages(
+    &agent,
+    turn_messages,
+    Box::new(ConsoleConsumer::new()),
+)
+.await?;
+
+messages = Some(session.messages);
+```
+
+Only update your retained messages after a successful turn. That keeps the last
+known-good transcript intact if a provider request or tool call fails.
+
 ## Persisting Sessions
 
 Save sessions to the database for later retrieval or continuation:

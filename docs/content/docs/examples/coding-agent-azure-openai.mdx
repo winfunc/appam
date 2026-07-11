@@ -68,4 +68,5 @@ let agent = AgentBuilder::new("azure-openai-coding-assistant")
 
 - The binary fails fast if `AZURE_OPENAI_RESOURCE` is unset.
 - It also fails fast if neither `AZURE_OPENAI_API_KEY` nor `OPENAI_API_KEY` is present.
-- Reasoning text is streamed to a dedicated terminal section with `.on_reasoning(...)`.
+- The standalone readline loop keeps `Option<Vec<ChatMessage>>`, appends follow-up prompts with `ChatMessage::user(input)`, and records `session.messages` after successful turns.
+- The response is streamed with `default_run_streaming_with_messages(...)` and `ConsoleConsumer::new()`, so reasoning, tool calls, and tool results appear in the terminal.

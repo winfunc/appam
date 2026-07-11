@@ -108,7 +108,8 @@ The agent will reason about the user's question, decide to call `add` with `{"a"
 
 ## The Agentic Loop
 
-When you call `.stream().run()`, Appam runs a loop:
+When you call `.stream().run()`, Appam runs a tool loop for that one user
+prompt:
 
 1. Send the conversation (system prompt + user message) to the LLM.
 2. The LLM streams back text and/or tool calls.
@@ -117,6 +118,10 @@ When you call `.stream().run()`, Appam runs a loop:
 5. The session completes and a `Session` object is returned.
 
 This loop is fully automatic. Tool execution is synchronous from the runtime's perspective, and results are fed back to the LLM without any manual intervention.
+
+For a readline-style chat loop across multiple user prompts, keep the returned
+`Session.messages` and pass the updated transcript into
+`default_run_streaming_with_messages(...)` on the next prompt.
 
 ## Inline Tool Definitions
 

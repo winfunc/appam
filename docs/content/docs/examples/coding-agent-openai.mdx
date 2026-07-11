@@ -47,5 +47,6 @@ let agent = AgentBuilder::new("openai-coding-assistant")
 ## Runtime behavior
 
 - The page slug is `coding-agent-openai`, but the runnable example target is `coding-agent-openai-responses`.
-- `.on_reasoning(...)` prints a separate "Reasoning" section when the provider emits reasoning text.
-- Tool calls and tool results are streamed to the console during each turn.
+- The file is standalone; there is no shared `examples/common` helper.
+- The readline loop keeps `Option<Vec<ChatMessage>>`, uses `agent.initial_messages(input)?` on the first turn, appends follow-ups with `ChatMessage::user(input)`, and records `session.messages` after successful turns.
+- The response is streamed with `default_run_streaming_with_messages(...)` and `ConsoleConsumer::new()`, so reasoning, tool calls, and tool results are streamed to the console during each turn.

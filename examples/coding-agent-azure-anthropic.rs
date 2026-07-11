@@ -339,6 +339,7 @@ async fn main() -> Result<()> {
     println!("\nType 'exit' or 'quit' to end the session.\n");
 
     let mut rl = DefaultEditor::new()?;
+    let mut messages: Option<Vec<ChatMessage>> = None;
 
     loop {
         let input = match rl.readline("You> ") {
@@ -368,53 +369,25 @@ async fn main() -> Result<()> {
         println!("\nAssistant> ");
         std::io::stdout().flush()?;
 
-        let tool_calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let tool_calls_for_callback = Arc::clone(&tool_calls);
-
-        let result = agent
-            .stream(&input)
-            .on_content(|content| {
-                print!("{}", content);
-                std::io::stdout().flush().ok();
-            })
-            .on_reasoning(|reasoning| {
-                print!("\n[Thinking] {}\n", reasoning);
-                std::io::stdout().flush().ok();
-            })
-            .on_tool_call(move |tool_name, args| {
-                println!("\n🔧 Tool Call: {}", tool_name);
-                println!(
-                    "   Args: {}",
-                    serde_json::to_string_pretty(&args).unwrap_or_default()
-                );
-                tool_calls_for_callback
-                    .lock()
-                    .unwrap()
-                    .push(tool_name.to_string());
-            })
-            .on_tool_result(|tool_name, result| {
-                println!("\n✓ {} completed", tool_name);
-                if let Some(error) = result.get("error").and_then(|e| e.as_str()) {
-                    println!("   Error: {}", error);
-                }
-            })
-            .run()
-            .await;
+        let turn_messages = match messages.as_ref() {
+            Some(previous) => {
+                let mut turn_messages = previous.clone();
+                turn_messages.push(ChatMessage::user(&input));
+                turn_messages
+            }
+            None => agent.initial_messages(&input)?,
+        };
+        let result = appam::agent::runtime::default_run_streaming_with_messages(
+            &agent,
+            turn_messages,
+            Box::new(ConsoleConsumer::new()),
+        )
+        .await;
 
         match result {
-            Ok(_) => {
+            Ok(session) => {
+                messages = Some(session.messages);
                 println!("\n");
-                let executed_tools = tool_calls.lock().unwrap();
-                if !executed_tools.is_empty() {
-                    println!(
-                        "Used tools: {}\n",
-                        executed_tools
-                            .iter()
-                            .map(String::as_str)
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    );
-                }
             }
             Err(e) => {
                 eprintln!("\n❌ Error: {}\n", e);

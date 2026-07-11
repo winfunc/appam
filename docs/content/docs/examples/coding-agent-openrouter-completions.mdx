@@ -56,5 +56,5 @@ let agent = AgentBuilder::new("gpt-coding-assistant")
 ## Runtime behavior
 
 - The example intentionally does not enable OpenRouter reasoning in this configuration.
-- The terminal output still wires up `.on_reasoning(...)`, so reasoning content will display if the upstream model emits it.
-- Tool calls and tool results are streamed to the console during each turn.
+- The standalone readline loop keeps `Option<Vec<ChatMessage>>`, appends follow-up prompts with `ChatMessage::user(input)`, and records `session.messages` after successful turns.
+- The response is streamed with `default_run_streaming_with_messages(...)` and `ConsoleConsumer::new()`, so reasoning content, tool calls, and tool results are streamed to the console during each turn.

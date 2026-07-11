@@ -70,6 +70,6 @@ let agent = AgentBuilder::new("claude-advanced")
 ## Runtime behavior
 
 - The loop is interactive and exits on `exit`, `quit`, or `bye`.
-- `.stream(input)` prints normal output with `.on_content(...)`.
-- `.on_reasoning(...)` prints a separate "Thinking" section when the provider emits reasoning text.
-- Tool calls and tool results are surfaced as terminal events during the session.
+- The file is standalone; there is no shared `examples/common` helper.
+- The loop keeps `Option<Vec<ChatMessage>>`, uses `agent.initial_messages(input)?` on the first turn, appends follow-ups with `ChatMessage::user(input)`, and records `session.messages` after successful turns.
+- The response is streamed with `default_run_streaming_with_messages(...)` and `ConsoleConsumer::new()`, so content, reasoning, tool calls, and tool results appear in the terminal.

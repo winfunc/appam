@@ -52,4 +52,5 @@ let agent = AgentBuilder::new("coding-assistant")
 
 - The reasoning config chooses `effort`, so the embedded OpenRouter reasoning block leaves `max_tokens` unset.
 - The outer builder still sets response `max_tokens(8192)`.
-- Reasoning, tool calls, and tool results are streamed to the terminal during each turn.
+- The standalone readline loop keeps `Option<Vec<ChatMessage>>`, appends follow-up prompts with `ChatMessage::user(input)`, and records `session.messages` after successful turns.
+- The response is streamed with `default_run_streaming_with_messages(...)` and `ConsoleConsumer::new()`, so reasoning, tool calls, and tool results are streamed to the terminal during each turn.

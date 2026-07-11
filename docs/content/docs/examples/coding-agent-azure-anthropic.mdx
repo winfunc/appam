@@ -75,4 +75,5 @@ let agent = AgentBuilder::new("azure-anthropic-coding-assistant")
 
 - The binary fails fast if no Azure Anthropic endpoint can be resolved.
 - It validates the credential shape required by the selected auth method before starting the session.
-- The terminal UI prints reasoning, tool calls, and tool results as the stream progresses.
+- The standalone readline loop keeps `Option<Vec<ChatMessage>>`, appends follow-up prompts with `ChatMessage::user(&input)`, and records `session.messages` after successful turns.
+- The response is streamed with `default_run_streaming_with_messages(...)` and `ConsoleConsumer::new()`, so reasoning, tool calls, and tool results appear as the stream progresses.

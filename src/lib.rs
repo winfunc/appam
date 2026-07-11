@@ -45,6 +45,12 @@
 //! }
 //! ```
 //!
+//! [`RuntimeAgent::stream`](crate::agent::streaming_builder::RuntimeAgent::stream)
+//! is a one-shot convenience API. For interactive chat loops, retain the
+//! returned [`Session::messages`](crate::agent::Session::messages), append the
+//! next user turn with [`ChatMessage::user`], and pass the transcript to
+//! [`agent::runtime::default_run_streaming_with_messages`].
+//!
 //! Use [`AgentBuilder`] when you need explicit runtime control:
 //!
 //! ```no_run
@@ -217,7 +223,7 @@ pub use async_trait::async_trait;
 ///         vec![],
 ///     )?;
 ///
-///     // Use closure-based streaming
+///     // Use closure-based streaming for one-shot turns.
 ///     agent
 ///         .stream("Hello")
 ///         .on_content(|text| print!("{}", text))

@@ -7,7 +7,7 @@ Appam streams agent output in real time through an event-based system. You can h
 
 ## Two Streaming Approaches
 
-1. **StreamBuilder (closure-based)** -- Inline event handlers with a fluent API. Best for applications, scripts, and CLI tools.
+1. **StreamBuilder (closure-based)** -- Inline event handlers with a fluent API. Best for one-shot streamed turns.
 2. **StreamConsumer trait** -- Reusable event handler objects. Best for libraries, middleware, and multi-destination routing.
 
 ## StreamBuilder API
@@ -56,6 +56,43 @@ let session = agent
 
 println!("Session ID: {}", session.session_id);
 ```
+
+`StreamBuilder` does not keep hidden state between calls. If you call
+`.stream(input).run()` inside a readline loop, each call starts a fresh
+`system + user` transcript. Keep `session.messages` yourself when you want an
+in-memory multi-turn chat.
+
+## In-Memory Conversation Replay
+
+The coding-agent examples use this compact pattern:
+
+```rust
+use appam::prelude::*;
+
+let mut messages: Option<Vec<ChatMessage>> = None;
+
+let input = "What did I ask first?";
+let turn_messages = match messages.as_ref() {
+    Some(previous) => {
+        let mut turn_messages = previous.clone();
+        turn_messages.push(ChatMessage::user(input));
+        turn_messages
+    }
+    None => agent.initial_messages(input)?,
+};
+
+let session = appam::agent::runtime::default_run_streaming_with_messages(
+    &agent,
+    turn_messages,
+    Box::new(ConsoleConsumer::new()),
+)
+.await?;
+
+messages = Some(session.messages);
+```
+
+Use this when your process owns the active chat. Use `continue_session(...)`
+instead when the transcript should be loaded from SQLite-backed session history.
 
 ### Available Handlers
 

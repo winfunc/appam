@@ -64,7 +64,11 @@ That streaming surface is not just for CLI output. The same event pipeline power
 2. **System prompt** -- instructions that shape the agent's behavior.
 3. **Tools** -- a `Vec<Arc<dyn Tool>>` of tools the agent can call (empty here).
 
-The `.stream()` method returns a `StreamBuilder` that lets you attach closures to handle events as they arrive. `.run()` executes the agent loop and returns a `Session` with conversation metadata.
+The `.stream()` method returns a `StreamBuilder` that lets you attach closures
+to handle events as they arrive. `.run()` executes one agent turn and returns a
+`Session` with conversation metadata. If you build an interactive loop, retain
+`Session.messages` and replay them with the next user prompt instead of calling
+`.stream(input)` as a fresh session each time.
 
 ## Model String Format
 

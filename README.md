@@ -255,7 +255,7 @@ Streaming is a first-class part of the runtime, not an afterthought. Every run c
 
 ### Closure-based streaming
 
-For most applications, use `agent.stream(...)` and attach handlers:
+For one-shot turns, use `agent.stream(...)` and attach handlers:
 
 ```rust
 use appam::prelude::*;
@@ -274,6 +274,9 @@ let session = agent
     .await?;
 ```
 
+`stream(...)` is intentionally a convenience for one prompt. It returns a
+`Session`, but it does not mutate the agent with hidden conversation state.
+
 ### Reusable consumers
 
 If you need reusable pipelines, Appam also exposes `StreamConsumer` plus built-in consumers such as:
@@ -282,6 +285,41 @@ If you need reusable pipelines, Appam also exposes `StreamConsumer` plus built-i
 - `ChannelConsumer`
 - `CallbackConsumer`
 - `TraceConsumer`
+
+### Interactive multi-turn loops
+
+For an in-memory terminal chat loop, keep the returned `Session.messages` and
+replay them with the next user message. This is the pattern used by the
+`examples/coding-agent-*.rs` files:
+
+```rust
+use appam::prelude::*;
+
+async fn run_turn(
+    agent: &RuntimeAgent,
+    messages: &mut Option<Vec<ChatMessage>>,
+    input: &str,
+) -> Result<()> {
+    let turn_messages = match messages.as_ref() {
+        Some(previous) => {
+            let mut turn_messages = previous.clone();
+            turn_messages.push(ChatMessage::user(input));
+            turn_messages
+        }
+        None => agent.initial_messages(input)?,
+    };
+
+    let session = appam::agent::runtime::default_run_streaming_with_messages(
+        agent,
+        turn_messages,
+        Box::new(ConsoleConsumer::new()),
+    )
+    .await?;
+
+    *messages = Some(session.messages);
+    Ok(())
+}
+```
 
 ### Session persistence
 
@@ -386,6 +424,10 @@ That lets you keep the orchestration layer inside Rust instead of scattering run
 - [FAQ](docs/content/docs/faq.mdx)
 
 ### Working examples
+
+Each `coding-agent-*` example is a single Rust file. The terminal loop keeps an
+in-memory `Vec<ChatMessage>`, appends follow-ups with `ChatMessage::user(...)`,
+streams with `ConsoleConsumer`, and records the returned `Session.messages`.
 
 - [Anthropic coding agent](examples/coding-agent-anthropic.rs)
 - [OpenAI coding agent](examples/coding-agent-openai-responses.rs)

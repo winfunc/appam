@@ -83,4 +83,5 @@ let agent = AgentBuilder::new("claude-bedrock")
 - SigV4 is the default and the example labels it as the streaming-capable path.
 - Setting `AWS_BEDROCK_AUTH_METHOD=bearer_token` switches to `BedrockAuthMethod::BearerToken`.
 - If you switch to a Bedrock Claude model that supports prompt caching, you can enable `.caching(...)` and Appam will emit Bedrock-compatible Anthropic cache checkpoints.
-- The terminal UI prints reasoning, tool calls, and tool results as the stream progresses.
+- The standalone readline loop keeps `Option<Vec<ChatMessage>>`, appends follow-up prompts with `ChatMessage::user(input)`, and records `session.messages` after successful turns.
+- The response is streamed with `default_run_streaming_with_messages(...)` and `ConsoleConsumer::new()`, so reasoning, tool calls, and tool results appear as the stream progresses.

@@ -128,6 +128,11 @@ The orchestration loop:
 5. Optionally auto-continues if required completion tools were not called
 6. Returns session metadata including full conversation history and usage
 
+Each `run(...)` call starts from a fresh `initial_messages(...)` transcript for
+the supplied prompt. Use `continue_session(...)` for persisted continuation or
+`default_run_streaming_with_messages(...)` when your application owns an
+in-memory transcript.
+
 ### `run_streaming()`
 
 ```rust
@@ -239,7 +244,9 @@ impl RuntimeAgent {
 }
 ```
 
-Returns a `StreamBuilder` that allows registering closure handlers for content, reasoning, tool calls, errors, and completion events. See [StreamBuilder](/docs/api-reference/stream-builder) for details.
+Returns a one-shot `StreamBuilder` that allows registering closure handlers for
+content, reasoning, tool calls, errors, and completion events. See
+[StreamBuilder](/docs/api-reference/stream-builder) for details.
 
 ```rust
 agent

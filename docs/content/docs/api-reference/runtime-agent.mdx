@@ -34,7 +34,7 @@ Notes:
 
 - `model()` falls back to `"openai/gpt-5"` when no override is set.
 - `provider()` returns only the agent-level override, not the resolved runtime provider after config/env merging.
-- `stream(...)` is just a convenience wrapper around the trait-based streaming runtime.
+- `stream(...)` is a one-shot convenience wrapper around the trait-based streaming runtime. It does not store hidden conversation state on the agent.
 
 ## Trait behavior
 

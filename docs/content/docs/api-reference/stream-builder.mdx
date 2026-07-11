@@ -5,7 +5,15 @@ description: Closure-based fluent API for handling streaming events.
 
 ## Overview
 
-`StreamBuilder` provides an ergonomic, closure-based API for handling streaming events without implementing the `StreamConsumer` trait. It is returned by `agent.stream("prompt")` on `RuntimeAgent` and uses a fluent builder pattern where you chain `.on_*` handlers and finalize with `.run()`.
+`StreamBuilder` provides an ergonomic, closure-based API for handling streaming
+events without implementing the `StreamConsumer` trait. It is returned by
+`agent.stream("prompt")` on `RuntimeAgent` and uses a fluent builder pattern
+where you chain `.on_*` handlers and finalize with `.run()`.
+
+`StreamBuilder` is a one-shot convenience for one prompt. It returns a
+populated `Session`, but it does not store hidden conversation state inside the
+agent. For readline-style multi-turn loops, keep `Session.messages` and pass
+the updated transcript to `default_run_streaming_with_messages(...)`.
 
 **Import path:** `appam::agent::streaming_builder::StreamBuilder`
 
@@ -296,6 +304,10 @@ Async handlers (`.on_tool_call_async`, `.on_tool_result_async`) are spawned as i
 | **Reusability** | Inline, per-call | Reusable struct, composable via `MultiConsumer` |
 | **Access to result** | `.run()` returns `Session` | `Session` returned by `run_streaming()` |
 
-Use `StreamBuilder` for quick, inline streaming. Use `StreamConsumer` when you need reusable consumers or want to broadcast to multiple destinations.
+Use `StreamBuilder` for quick, inline streaming of a single turn. Use
+`StreamConsumer` when you need reusable consumers or want to broadcast to
+multiple destinations. Use
+`appam::agent::runtime::default_run_streaming_with_messages(...)` when your
+application owns and replays a multi-turn transcript.
 
 See [StreamConsumer](/docs/api-reference/stream-consumer) for the trait-based approach.

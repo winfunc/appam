@@ -52,5 +52,6 @@ let agent = AgentBuilder::new("vertex-coding-assistant")
 ## Runtime behavior
 
 - `GOOGLE_VERTEX_PROJECT` and `GOOGLE_VERTEX_LOCATION` are optional and are only needed when you want project-scoped Vertex endpoints.
-- The loop streams normal content, reasoning content, tool calls, and tool results to the terminal.
+- The standalone readline loop keeps `Option<Vec<ChatMessage>>`, appends follow-up prompts with `ChatMessage::user(input)`, and records `session.messages` after successful turns.
+- The response is streamed with `default_run_streaming_with_messages(...)` and `ConsoleConsumer::new()`, so normal content, reasoning content, tool calls, and tool results appear in the terminal.
 - The sample exits on `exit`, `quit`, or `bye`, like the other coding-agent binaries.

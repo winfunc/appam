@@ -413,6 +413,53 @@ pub struct ChatMessage {
 }
 
 impl ChatMessage {
+    /// Create a plain user text message for transcript construction.
+    ///
+    /// This constructor is intended for callers that manage a conversation
+    /// transcript explicitly with
+    /// [`crate::agent::runtime::default_run_streaming_with_messages`]. It fills
+    /// the optional tool, reasoning, provider, and status fields with `None`
+    /// while preserving a timestamp for debugging and trace output.
+    ///
+    /// # Parameters
+    ///
+    /// * `content` - The user-visible text to append to the conversation.
+    ///
+    /// # Returns
+    ///
+    /// A [`ChatMessage`] with [`Role::User`] and the provided text content.
+    ///
+    /// # Security considerations
+    ///
+    /// The returned message stores the supplied text unchanged. Callers should
+    /// avoid logging or persisting user prompts unless their application has an
+    /// explicit retention policy.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use appam::prelude::ChatMessage;
+    ///
+    /// let message = ChatMessage::user("Explain this compiler error");
+    /// assert_eq!(message.content.as_deref(), Some("Explain this compiler error"));
+    /// ```
+    pub fn user(content: impl Into<String>) -> Self {
+        Self {
+            role: Role::User,
+            name: None,
+            tool_call_id: None,
+            content: Some(content.into()),
+            tool_calls: None,
+            reasoning: None,
+            raw_content_blocks: None,
+            tool_metadata: None,
+            timestamp: Some(chrono::Utc::now()),
+            id: None,
+            provider_response_id: None,
+            status: None,
+        }
+    }
+
     /// Generate a unique message ID.
     pub fn generate_id() -> String {
         format!("msg_{}", Uuid::new_v4().simple())

@@ -23,6 +23,7 @@ pub struct ChatMessage {
     pub tool_metadata: Option<ToolExecutionMetadata>,
     pub timestamp: Option<chrono::DateTime<chrono::Utc>>,
     pub id: Option<String>,
+    pub provider_response_id: Option<String>,
     pub status: Option<MessageStatus>,
 }
 ```
@@ -41,6 +42,7 @@ pub struct ChatMessage {
 | `tool_metadata` | `Option<ToolExecutionMetadata>` | Metadata from tool execution (success status, duration, tool name, arguments) |
 | `timestamp` | `Option<DateTime<Utc>>` | When the message was created |
 | `id` | `Option<String>` | Provider-assigned message ID (required for Responses API conversation history) |
+| `provider_response_id` | `Option<String>` | Provider-native response ID used by APIs that support cross-turn continuation |
 | `status` | `Option<MessageStatus>` | Message completion status (InProgress, Completed, Incomplete, Failed) |
 
 ## Role
@@ -112,6 +114,17 @@ pub enum MessageStatus {
 Tracks the completion state of messages. Required for assistant messages in Responses API conversation history.
 
 ## Conversion Methods
+
+### User Message Constructor
+
+```rust
+let message = ChatMessage::user("What changed in this file?");
+```
+
+`ChatMessage::user(...)` creates a plain user text message with the optional
+tool, reasoning, provider, and status fields left empty. It is the shortest way
+to append a follow-up prompt when you are manually replaying `Session.messages`
+in an in-memory chat loop.
 
 ### To Responses API Format
 
