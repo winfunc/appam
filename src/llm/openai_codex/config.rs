@@ -213,14 +213,21 @@ impl Default for OpenAICodexConfig {
 /// The ChatGPT Codex backend is close to the public OpenAI Responses API, but a
 /// few legacy Codex aliases have stricter effort compatibility. This helper
 /// first applies the standard OpenAI model-aware resolution and then clamps
-/// unsupported Codex-specific cases to values the backend accepts.
+/// unsupported Codex-specific cases to values the backend accepts. The exact
+/// `gpt-5.6-sol` model is a Codex-subscription capability exception: it accepts
+/// `xhigh` even though the public OpenAI allowlist does not advertise it yet.
+/// Keeping that exception exact makes unknown future suffixes fail closed.
 pub fn resolve_reasoning_effort_for_codex_model(
     model: &str,
     requested_effort: Option<ReasoningEffort>,
 ) -> ReasoningEffort {
     let normalized = normalize_openai_model(model);
     let selected =
-        crate::llm::openai::resolve_reasoning_effort_for_model(&normalized, requested_effort);
+        if normalized == "gpt-5.6-sol" && requested_effort == Some(ReasoningEffort::XHigh) {
+            ReasoningEffort::XHigh
+        } else {
+            crate::llm::openai::resolve_reasoning_effort_for_model(&normalized, requested_effort)
+        };
 
     match normalized.as_str() {
         model
@@ -309,6 +316,17 @@ mod tests {
 
     #[test]
     fn test_resolve_reasoning_effort_clamps_codex_specific_models() {
+        assert_eq!(
+            resolve_reasoning_effort_for_codex_model("gpt-5.6-sol", Some(ReasoningEffort::XHigh)),
+            ReasoningEffort::XHigh
+        );
+        assert_eq!(
+            resolve_reasoning_effort_for_codex_model(
+                "gpt-5.6-sol-preview",
+                Some(ReasoningEffort::XHigh)
+            ),
+            ReasoningEffort::High
+        );
         assert_eq!(
             resolve_reasoning_effort_for_codex_model("gpt-5.5", Some(ReasoningEffort::Minimal)),
             ReasoningEffort::Low

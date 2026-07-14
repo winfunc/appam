@@ -1249,6 +1249,34 @@ mod tests {
     }
 
     #[test]
+    fn test_build_request_body_preserves_gpt_5_6_sol_and_xhigh() {
+        let client = OpenAICodexClient::new(OpenAICodexConfig {
+            access_token: Some(mock_token("acc_sol")),
+            model: "gpt-5.6-sol".to_string(),
+            reasoning: Some(crate::llm::openai::ReasoningConfig::xhigh_effort()),
+            ..Default::default()
+        })
+        .expect("gpt-5.6-sol Codex config should be valid");
+
+        let request = client
+            .build_request_body(&[UnifiedMessage::user("Inspect this target")], &[])
+            .expect("request body should build");
+        let serialized = serde_json::to_value(request).expect("request should serialize");
+
+        assert_eq!(
+            serialized.get("model").and_then(Value::as_str),
+            Some("gpt-5.6-sol")
+        );
+        assert_eq!(
+            serialized
+                .get("reasoning")
+                .and_then(|reasoning| reasoning.get("effort"))
+                .and_then(Value::as_str),
+            Some("xhigh")
+        );
+    }
+
+    #[test]
     fn test_extract_instructions_omits_non_system_messages() {
         let messages = vec![
             UnifiedMessage::system("System A"),
