@@ -72,6 +72,10 @@ let agent = AgentBuilder::new("reasoning-agent")
 
 Convenience constructors include `auto()`, `high_effort()`, `xhigh_effort()`, `low_latency()`, `minimal()`, and `no_reasoning()`.
 
+The exact `gpt-5.6-sol` model accepts an explicit `XHigh` request through the
+direct OpenAI and Azure OpenAI transports. Its model-aware default remains
+`High`, and unknown suffixed variants remain fail-closed.
+
 ## GPT-5.5 Sampling Note
 
 The current OpenAI config code only allows `temperature`, `top_p`, and `top_logprobs` for GPT-5.5 when reasoning is in `None` mode. Use `ReasoningConfig::no_reasoning()` if you need those sampling controls on GPT-5.5.

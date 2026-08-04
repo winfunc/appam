@@ -1554,6 +1554,28 @@ mod tests {
     }
 
     #[test]
+    fn test_build_request_body_preserves_gpt56_sol_xhigh_reasoning() {
+        let client = build_test_client(OpenAIConfig {
+            model: "gpt-5.6-sol".to_string(),
+            reasoning: Some(ReasoningConfig::xhigh_effort()),
+            ..Default::default()
+        });
+
+        let request = client
+            .build_request_body(&[UnifiedMessage::user("Inspect this target")], &[])
+            .expect("request body should build");
+
+        assert_eq!(request.model, "gpt-5.6-sol");
+        assert_eq!(
+            request
+                .reasoning
+                .as_ref()
+                .and_then(|reasoning| reasoning.effort.as_deref()),
+            Some("xhigh")
+        );
+    }
+
+    #[test]
     fn test_set_previous_response_id_updates_follow_up_requests() {
         let client = build_test_client(OpenAIConfig {
             store: Some(true),

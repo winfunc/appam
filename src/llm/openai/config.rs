@@ -379,6 +379,10 @@ fn is_gpt_55_model(model: &str) -> bool {
     model == "gpt-5.5" || model.starts_with("gpt-5.5-") && !is_gpt_55_pro_model(&model)
 }
 
+fn is_gpt_56_sol_model(model: &str) -> bool {
+    normalize_openai_model(model) == "gpt-5.6-sol"
+}
+
 fn is_gpt_52_default_none_model(model: &str) -> bool {
     let model = normalize_openai_model(model);
     model == "gpt-5.2" || model.starts_with("gpt-5.2-20")
@@ -399,7 +403,7 @@ fn model_requires_high_reasoning(model: &str) -> bool {
 }
 
 fn model_defaults_to_high_reasoning(model: &str) -> bool {
-    is_gpt_55_pro_model(model) || model_requires_high_reasoning(model)
+    is_gpt_55_pro_model(model) || is_gpt_56_sol_model(model) || model_requires_high_reasoning(model)
 }
 
 /// Returns whether sampling-oriented parameters can be sent for a model.
@@ -683,9 +687,10 @@ pub enum ReasoningEffort {
     High,
     /// Extra-high reasoning for the most complex problems
     ///
-    /// Maximum reasoning effort available. Supported by GPT-5.5 and selected
-    /// legacy codex models. Provides the deepest analysis at the cost of
-    /// significantly more tokens and longer generation time.
+    /// Maximum reasoning effort available. Supported by GPT-5.5, the exact
+    /// GPT-5.6 SOL model, and selected legacy codex models. Provides the
+    /// deepest analysis at the cost of significantly more tokens and longer
+    /// generation time.
     XHigh,
 }
 
@@ -694,6 +699,7 @@ pub enum ReasoningEffort {
 /// Returns the recommended reasoning effort based on the model's capabilities:
 /// - `gpt-5.5`: None (current default mode)
 /// - `gpt-5.5-pro`: High
+/// - `gpt-5.6-sol`: High (supports an explicit XHigh request)
 /// - `gpt-5-pro`: High (legacy high-only model)
 /// - `gpt-5.1-codex-max`, `gpt-5.2-codex`, `gpt-5.3-codex`: XHigh
 /// - Other GPT-5/o-series reasoning models: High
@@ -749,6 +755,7 @@ pub fn default_reasoning_effort_for_model(model: &str) -> ReasoningEffort {
 /// `XHigh` is currently supported for:
 /// - `gpt-5.5`
 /// - `gpt-5.5-pro`
+/// - exact `gpt-5.6-sol`
 /// - `gpt-5.1-codex-max`
 /// - `gpt-5.2-codex`
 /// - `gpt-5.3-codex`
@@ -762,7 +769,7 @@ pub fn model_supports_xhigh_reasoning(model: &str) -> bool {
 
     matches!(
         model.as_str(),
-        "gpt-5.5" | "gpt-5.1-codex-max" | "gpt-5.2-codex" | "gpt-5.3-codex"
+        "gpt-5.5" | "gpt-5.6-sol" | "gpt-5.1-codex-max" | "gpt-5.2-codex" | "gpt-5.3-codex"
     ) || model.starts_with("gpt-5.5-")
 }
 
@@ -1173,6 +1180,26 @@ mod tests {
         };
 
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_allows_xhigh_reasoning_for_exact_gpt56_sol() {
+        let config = OpenAIConfig {
+            model: "gpt-5.6-sol".to_string(),
+            reasoning: Some(ReasoningConfig {
+                effort: Some(ReasoningEffort::XHigh),
+                summary: Some(ReasoningSummary::Detailed),
+            }),
+            ..Default::default()
+        };
+
+        assert!(config.validate().is_ok());
+        assert!(model_supports_xhigh_reasoning("openai/gpt-5.6-sol"));
+        assert!(!model_supports_xhigh_reasoning("gpt-5.6-sol-preview"));
+        assert_eq!(
+            default_reasoning_effort_for_model("gpt-5.6-sol"),
+            ReasoningEffort::High
+        );
     }
 
     #[test]
