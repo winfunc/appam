@@ -26,6 +26,21 @@ pub enum ReasoningEffort {
     /// Extra-high reasoning effort. OpenRouter accepts this value and maps it
     /// internally to the provider's maximum reasoning tier where supported.
     XHigh,
+    /// Maximum reasoning effort — the top rung of OpenRouter's ladder.
+    ///
+    /// OpenRouter's `reasoning.effort` enum is
+    /// `max | xhigh | high | medium | low | minimal | none`, and `max` is the
+    /// only value that reaches the top tier of models whose per-model
+    /// `supported_efforts` array is `["max", ...]` (for example
+    /// `moonshotai/kimi-k3`, `z-ai/glm-5.3`, `openai/gpt-5.6-sol`, and
+    /// `anthropic/claude-opus-5`). Those models do not accept `xhigh`, so
+    /// without this variant their highest reasoning tier is unreachable.
+    ///
+    /// Check a model's `supported_efforts` in `GET /api/v1/models` before
+    /// sending this: OpenRouter remaps unsupported efforts to the nearest
+    /// supported rung rather than erroring, which silently downgrades the
+    /// request.
+    Max,
 }
 
 /// Reasoning summary verbosity.
@@ -440,5 +455,25 @@ mod tests {
         let value = serde_json::to_value(config).expect("reasoning config should serialize");
 
         assert_eq!(value["effort"], json!("xhigh"));
+    }
+
+    #[test]
+    fn reasoning_effort_max_serializes_for_top_tier_openrouter_models() {
+        let config = ReasoningConfig {
+            effort: Some(ReasoningEffort::Max),
+            ..Default::default()
+        };
+
+        let value = serde_json::to_value(config).expect("reasoning config should serialize");
+
+        assert_eq!(value["effort"], json!("max"));
+    }
+
+    #[test]
+    fn reasoning_effort_max_round_trips() {
+        let effort: ReasoningEffort =
+            serde_json::from_value(json!("max")).expect("`max` should deserialize");
+
+        assert_eq!(effort, ReasoningEffort::Max);
     }
 }
