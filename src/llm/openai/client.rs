@@ -1508,7 +1508,7 @@ mod tests {
     use reqwest::header::{HeaderMap, HeaderValue};
     use std::collections::{HashMap, HashSet};
 
-    use crate::llm::openai::{ConversationConfig, ReasoningConfig};
+    use crate::llm::openai::{ConversationConfig, ReasoningConfig, ReasoningEffort};
     use crate::llm::unified::UnifiedMessage;
 
     fn build_test_client(config: OpenAIConfig) -> OpenAIClient {
@@ -1554,25 +1554,44 @@ mod tests {
     }
 
     #[test]
-    fn test_build_request_body_preserves_gpt56_sol_xhigh_reasoning() {
-        let client = build_test_client(OpenAIConfig {
-            model: "gpt-5.6-sol".to_string(),
-            reasoning: Some(ReasoningConfig::xhigh_effort()),
-            ..Default::default()
-        });
+    fn test_build_request_body_preserves_sol_and_daybreak_reasoning() {
+        for model in ["gpt-5.6-sol", "gpt-daybreak-blue-latest"] {
+            for identifier in [model.to_string(), format!("openai/{model}")] {
+                for azure in [
+                    None,
+                    Some(crate::llm::openai::AzureConfig {
+                        resource_name: "test-resource".to_string(),
+                        api_version: "2025-04-01-preview".to_string(),
+                    }),
+                ] {
+                    for (effort, expected) in
+                        [(None, "high"), (Some(ReasoningEffort::XHigh), "xhigh")]
+                    {
+                        let client = build_test_client(OpenAIConfig {
+                            model: identifier.clone(),
+                            azure: azure.clone(),
+                            reasoning: Some(ReasoningConfig {
+                                effort,
+                                summary: None,
+                            }),
+                            ..Default::default()
+                        });
+                        let request = client
+                            .build_request_body(&[UnifiedMessage::user("Hello")], &[])
+                            .expect("request body should build");
 
-        let request = client
-            .build_request_body(&[UnifiedMessage::user("Inspect this target")], &[])
-            .expect("request body should build");
-
-        assert_eq!(request.model, "gpt-5.6-sol");
-        assert_eq!(
-            request
-                .reasoning
-                .as_ref()
-                .and_then(|reasoning| reasoning.effort.as_deref()),
-            Some("xhigh")
-        );
+                        assert_eq!(request.model, model);
+                        assert_eq!(
+                            request
+                                .reasoning
+                                .as_ref()
+                                .and_then(|reasoning| reasoning.effort.as_deref()),
+                            Some(expected)
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]

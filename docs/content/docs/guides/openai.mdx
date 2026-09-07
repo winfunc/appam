@@ -64,7 +64,7 @@ use appam::prelude::*;
 
 let agent = AgentBuilder::new("reasoning-agent")
     .provider(LlmProvider::OpenAI)
-    .model("gpt-5.5")
+    .model("gpt-daybreak-blue-latest")
     .system_prompt("You are a reasoning assistant.")
     .openai_reasoning(ReasoningConfig::high_effort())
     .build()?;
@@ -72,9 +72,11 @@ let agent = AgentBuilder::new("reasoning-agent")
 
 Convenience constructors include `auto()`, `high_effort()`, `xhigh_effort()`, `low_latency()`, `minimal()`, and `no_reasoning()`.
 
-The exact `gpt-5.6-sol` model accepts an explicit `XHigh` request through the
-direct OpenAI and Azure OpenAI transports. Its model-aware default remains
-`High`, and unknown suffixed variants remain fail-closed.
+The exact `gpt-5.6-sol` and `gpt-daybreak-blue-latest` models share configuration
+rules through the direct OpenAI and Azure OpenAI transports: their model-aware
+default remains `High`, and explicit `XHigh` is supported. Neither accepts
+`None` reasoning or sampling parameters. Requests preserve the selected model
+identifier, and unknown suffixed variants remain unsupported for `XHigh`.
 
 ## GPT-5.5 Sampling Note
 

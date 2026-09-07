@@ -64,16 +64,17 @@ use appam::prelude::*;
 
 let agent = AgentBuilder::new("codex-reasoning")
     .provider(LlmProvider::OpenAICodex)
-    .model("gpt-5.5")
+    .model("gpt-daybreak-blue-latest")
     .system_prompt("You are a reasoning assistant.")
     .openai_reasoning(ReasoningConfig::high_effort())
     .build()?;
 ```
 
-The exact `gpt-5.6-sol` model supports `xhigh` reasoning on the Codex
-subscription transport. Appam preserves both the model identifier and the
-`xhigh` effort in the request; unknown suffixed variants continue to use the
-fail-closed generic capability rules.
+The exact `gpt-5.6-sol` and `gpt-daybreak-blue-latest` models share configuration
+rules on the Codex subscription transport: their model-aware default remains
+`high`, explicit `xhigh` is supported, and sampling parameters are rejected.
+Appam preserves the selected model identifier in requests; unknown suffixed
+variants continue to use the generic capability rules.
 
 ## Example Binary
 

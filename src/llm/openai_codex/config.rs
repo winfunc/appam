@@ -214,8 +214,9 @@ impl Default for OpenAICodexConfig {
 /// few legacy Codex aliases have stricter effort compatibility. This helper
 /// first applies the standard OpenAI model-aware resolution and then clamps
 /// unsupported Codex-specific cases to values the backend accepts. The shared
-/// OpenAI capability table recognizes exact `gpt-5.6-sol` as accepting an
-/// explicit `xhigh` request, while unknown future suffixes remain fail-closed.
+/// OpenAI capability table recognizes exact `gpt-5.6-sol` and
+/// `gpt-daybreak-blue-latest` as accepting an explicit `xhigh` request, while
+/// unknown future suffixes remain fail-closed.
 pub fn resolve_reasoning_effort_for_codex_model(
     model: &str,
     requested_effort: Option<ReasoningEffort>,
@@ -337,5 +338,58 @@ mod tests {
             ),
             ReasoningEffort::Medium
         );
+    }
+
+    #[test]
+    fn test_daybreak_matches_sol_codex_reasoning_and_sampling_rules() {
+        for model in [
+            "gpt-daybreak-blue-latest",
+            "openai/gpt-daybreak-blue-latest",
+        ] {
+            for effort in [
+                None,
+                Some(ReasoningEffort::None),
+                Some(ReasoningEffort::Minimal),
+                Some(ReasoningEffort::Low),
+                Some(ReasoningEffort::Medium),
+                Some(ReasoningEffort::High),
+                Some(ReasoningEffort::XHigh),
+            ] {
+                assert_eq!(
+                    resolve_reasoning_effort_for_codex_model(model, effort),
+                    resolve_reasoning_effort_for_codex_model("gpt-5.6-sol", effort)
+                );
+
+                let config = OpenAICodexConfig {
+                    model: model.to_string(),
+                    reasoning: Some(ReasoningConfig {
+                        effort,
+                        summary: None,
+                    }),
+                    ..Default::default()
+                };
+                assert!(config.validate().is_ok());
+                assert!(OpenAICodexConfig {
+                    temperature: Some(0.5),
+                    ..config.clone()
+                }
+                .validate()
+                .is_err());
+                assert!(OpenAICodexConfig {
+                    top_p: Some(0.9),
+                    ..config
+                }
+                .validate()
+                .is_err());
+            }
+
+            assert_eq!(
+                resolve_reasoning_effort_for_codex_model(
+                    &format!("{model}-preview"),
+                    Some(ReasoningEffort::XHigh)
+                ),
+                ReasoningEffort::High
+            );
+        }
     }
 }

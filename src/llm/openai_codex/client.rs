@@ -1249,31 +1249,41 @@ mod tests {
     }
 
     #[test]
-    fn test_build_request_body_preserves_gpt_5_6_sol_and_xhigh() {
-        let client = OpenAICodexClient::new(OpenAICodexConfig {
-            access_token: Some(mock_token("acc_sol")),
-            model: "gpt-5.6-sol".to_string(),
-            reasoning: Some(crate::llm::openai::ReasoningConfig::xhigh_effort()),
-            ..Default::default()
-        })
-        .expect("gpt-5.6-sol Codex config should be valid");
+    fn test_build_request_body_preserves_sol_and_daybreak_reasoning() {
+        for model in ["gpt-5.6-sol", "gpt-daybreak-blue-latest"] {
+            for identifier in [model.to_string(), format!("openai/{model}")] {
+                for (effort, expected) in [
+                    (None, "high"),
+                    (Some(crate::llm::openai::ReasoningEffort::XHigh), "xhigh"),
+                ] {
+                    let client = OpenAICodexClient::new(OpenAICodexConfig {
+                        access_token: Some(mock_token("acc_test")),
+                        model: identifier.clone(),
+                        reasoning: Some(crate::llm::openai::ReasoningConfig {
+                            effort,
+                            summary: None,
+                        }),
+                        ..Default::default()
+                    })
+                    .expect("Codex config should be valid");
 
-        let request = client
-            .build_request_body(&[UnifiedMessage::user("Inspect this target")], &[])
-            .expect("request body should build");
-        let serialized = serde_json::to_value(request).expect("request should serialize");
+                    let request = client
+                        .build_request_body(&[UnifiedMessage::user("Hello")], &[])
+                        .expect("request body should build");
+                    let serialized =
+                        serde_json::to_value(request).expect("request should serialize");
 
-        assert_eq!(
-            serialized.get("model").and_then(Value::as_str),
-            Some("gpt-5.6-sol")
-        );
-        assert_eq!(
-            serialized
-                .get("reasoning")
-                .and_then(|reasoning| reasoning.get("effort"))
-                .and_then(Value::as_str),
-            Some("xhigh")
-        );
+                    assert_eq!(serialized.get("model").and_then(Value::as_str), Some(model));
+                    assert_eq!(
+                        serialized
+                            .get("reasoning")
+                            .and_then(|reasoning| reasoning.get("effort"))
+                            .and_then(Value::as_str),
+                        Some(expected)
+                    );
+                }
+            }
+        }
     }
 
     #[test]

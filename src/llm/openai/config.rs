@@ -379,8 +379,16 @@ fn is_gpt_55_model(model: &str) -> bool {
     model == "gpt-5.5" || model.starts_with("gpt-5.5-") && !is_gpt_55_pro_model(&model)
 }
 
-fn is_gpt_56_sol_model(model: &str) -> bool {
-    normalize_openai_model(model) == "gpt-5.6-sol"
+/// Match exact model identifiers that share GPT-5.6 SOL configuration rules.
+///
+/// Accepts an optional `openai/` prefix without changing the request-facing
+/// identifier. Unknown suffixes are excluded so capability support is never
+/// inferred from an unrecognized model name.
+fn has_gpt_56_sol_capabilities(model: &str) -> bool {
+    matches!(
+        normalize_openai_model(model).as_str(),
+        "gpt-5.6-sol" | "gpt-daybreak-blue-latest"
+    )
 }
 
 fn is_gpt_52_default_none_model(model: &str) -> bool {
@@ -403,7 +411,9 @@ fn model_requires_high_reasoning(model: &str) -> bool {
 }
 
 fn model_defaults_to_high_reasoning(model: &str) -> bool {
-    is_gpt_55_pro_model(model) || is_gpt_56_sol_model(model) || model_requires_high_reasoning(model)
+    is_gpt_55_pro_model(model)
+        || has_gpt_56_sol_capabilities(model)
+        || model_requires_high_reasoning(model)
 }
 
 /// Returns whether sampling-oriented parameters can be sent for a model.
@@ -411,7 +421,7 @@ fn model_defaults_to_high_reasoning(model: &str) -> bool {
 /// OpenAI's current GPT-5.5 compatibility rules only allow `temperature`,
 /// `top_p`, and `top_logprobs` when GPT-5.5 is running with
 /// `reasoning.effort = "none"` (explicitly or via the model default). Older
-/// GPT-5 family models and o-series reasoning models reject these fields.
+/// GPT-5, Daybreak, and o-series reasoning models reject these fields.
 pub fn model_supports_sampling_parameters(
     model: &str,
     requested_effort: Option<ReasoningEffort>,
@@ -426,6 +436,7 @@ pub fn model_supports_sampling_parameters(
     }
 
     if normalized.starts_with("gpt-5")
+        || normalized.starts_with("gpt-daybreak-")
         || normalized.starts_with("o1")
         || normalized.starts_with("o3")
         || normalized.starts_with("o4")
@@ -688,9 +699,9 @@ pub enum ReasoningEffort {
     /// Extra-high reasoning for the most complex problems
     ///
     /// Maximum reasoning effort available. Supported by GPT-5.5, the exact
-    /// GPT-5.6 SOL model, and selected legacy codex models. Provides the
-    /// deepest analysis at the cost of significantly more tokens and longer
-    /// generation time.
+    /// GPT-5.6 SOL and GPT Daybreak Blue Latest models, and selected legacy
+    /// codex models. Provides the deepest analysis at the cost of significantly
+    /// more tokens and longer generation time.
     XHigh,
 }
 
@@ -700,6 +711,7 @@ pub enum ReasoningEffort {
 /// - `gpt-5.5`: None (current default mode)
 /// - `gpt-5.5-pro`: High
 /// - `gpt-5.6-sol`: High (supports an explicit XHigh request)
+/// - `gpt-daybreak-blue-latest`: Same configuration rules as `gpt-5.6-sol`
 /// - `gpt-5-pro`: High (legacy high-only model)
 /// - `gpt-5.1-codex-max`, `gpt-5.2-codex`, `gpt-5.3-codex`: XHigh
 /// - Other GPT-5/o-series reasoning models: High
@@ -756,6 +768,7 @@ pub fn default_reasoning_effort_for_model(model: &str) -> ReasoningEffort {
 /// - `gpt-5.5`
 /// - `gpt-5.5-pro`
 /// - exact `gpt-5.6-sol`
+/// - exact `gpt-daybreak-blue-latest`
 /// - `gpt-5.1-codex-max`
 /// - `gpt-5.2-codex`
 /// - `gpt-5.3-codex`
@@ -767,10 +780,12 @@ pub fn default_reasoning_effort_for_model(model: &str) -> ReasoningEffort {
 pub fn model_supports_xhigh_reasoning(model: &str) -> bool {
     let model = normalize_openai_model(model);
 
-    matches!(
-        model.as_str(),
-        "gpt-5.5" | "gpt-5.6-sol" | "gpt-5.1-codex-max" | "gpt-5.2-codex" | "gpt-5.3-codex"
-    ) || model.starts_with("gpt-5.5-")
+    has_gpt_56_sol_capabilities(&model)
+        || matches!(
+            model.as_str(),
+            "gpt-5.5" | "gpt-5.1-codex-max" | "gpt-5.2-codex" | "gpt-5.3-codex"
+        )
+        || model.starts_with("gpt-5.5-")
 }
 
 /// Resolves the effective reasoning effort for a specific model.
@@ -1183,23 +1198,84 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_allows_xhigh_reasoning_for_exact_gpt56_sol() {
-        let config = OpenAIConfig {
-            model: "gpt-5.6-sol".to_string(),
-            reasoning: Some(ReasoningConfig {
-                effort: Some(ReasoningEffort::XHigh),
-                summary: Some(ReasoningSummary::Detailed),
-            }),
-            ..Default::default()
-        };
+    fn test_validate_allows_xhigh_reasoning_for_exact_sol_and_daybreak() {
+        for model in ["gpt-5.6-sol", "gpt-daybreak-blue-latest"] {
+            for identifier in [model.to_string(), format!("openai/{model}")] {
+                let config = OpenAIConfig {
+                    model: identifier.clone(),
+                    reasoning: Some(ReasoningConfig::xhigh_effort()),
+                    ..Default::default()
+                };
 
-        assert!(config.validate().is_ok());
-        assert!(model_supports_xhigh_reasoning("openai/gpt-5.6-sol"));
-        assert!(!model_supports_xhigh_reasoning("gpt-5.6-sol-preview"));
-        assert_eq!(
-            default_reasoning_effort_for_model("gpt-5.6-sol"),
-            ReasoningEffort::High
-        );
+                assert!(config.validate().is_ok(), "{identifier}");
+                assert!(model_supports_xhigh_reasoning(&identifier));
+                assert_eq!(
+                    default_reasoning_effort_for_model(&identifier),
+                    ReasoningEffort::High
+                );
+                assert!(!model_supports_xhigh_reasoning(&format!(
+                    "{identifier}-preview"
+                )));
+                assert!(!model_supports_sampling_parameters(
+                    &format!("{identifier}-preview"),
+                    None
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn test_daybreak_matches_sol_reasoning_and_sampling_rules() {
+        for model in [
+            "gpt-daybreak-blue-latest",
+            "openai/gpt-daybreak-blue-latest",
+        ] {
+            for effort in [
+                None,
+                Some(ReasoningEffort::None),
+                Some(ReasoningEffort::Minimal),
+                Some(ReasoningEffort::Low),
+                Some(ReasoningEffort::Medium),
+                Some(ReasoningEffort::High),
+                Some(ReasoningEffort::XHigh),
+            ] {
+                assert_eq!(
+                    resolve_reasoning_effort_for_model(model, effort),
+                    resolve_reasoning_effort_for_model("gpt-5.6-sol", effort)
+                );
+                assert!(!model_supports_sampling_parameters(model, effort));
+
+                let config = OpenAIConfig {
+                    model: model.to_string(),
+                    reasoning: Some(ReasoningConfig {
+                        effort,
+                        summary: None,
+                    }),
+                    ..Default::default()
+                };
+                assert_eq!(
+                    config.validate().is_ok(),
+                    effort != Some(ReasoningEffort::None)
+                );
+
+                for sampling_config in [
+                    OpenAIConfig {
+                        temperature: Some(0.5),
+                        ..config.clone()
+                    },
+                    OpenAIConfig {
+                        top_p: Some(0.9),
+                        ..config.clone()
+                    },
+                    OpenAIConfig {
+                        top_logprobs: Some(4),
+                        ..config.clone()
+                    },
+                ] {
+                    assert!(sampling_config.validate().is_err());
+                }
+            }
+        }
     }
 
     #[test]

@@ -59,9 +59,10 @@ Important behavior from the current code:
 
 - If no effort is set, Appam picks a model-specific default.
 - Unsupported `XHigh` requests are downgraded to `High`.
-- Exact `gpt-5.6-sol` accepts an explicit `XHigh` request while retaining a
-  model-specific default of `High`; unknown suffixed variants remain
-  fail-closed.
+- Exact `gpt-5.6-sol` and `gpt-daybreak-blue-latest` accept an explicit `XHigh`
+  request while retaining a model-specific default of `High`; neither supports
+  sampling parameters, and unknown suffixed variants remain unsupported for
+  `XHigh`.
 - `ReasoningEffort::None` is a first-class value and is required for some GPT-5.5 sampling combinations.
 
 ## OpenRouter

@@ -142,10 +142,17 @@ Examples of model strings Appam recognizes:
 | --- | --- |
 | `anthropic/claude-sonnet-4-5` | Anthropic |
 | `openai/gpt-5.5` | OpenAI |
+| `openai/gpt-daybreak-blue-latest` | OpenAI |
 | `openai-codex/gpt-5.5` | OpenAI Codex |
+| `openai-codex/gpt-daybreak-blue-latest` | OpenAI Codex |
 | `openrouter/anthropic/claude-sonnet-4-5` | OpenRouter Responses |
 | `vertex/gemini-2.5-flash` | Vertex |
 | `gemini-2.5-pro` | Vertex |
+
+The exact `gpt-daybreak-blue-latest` identifier uses the same configuration
+rules as `gpt-5.6-sol`: model-aware reasoning defaults to `High`, explicit
+`XHigh` is supported, and sampling parameters are rejected. Requests preserve
+the selected identifier across OpenAI, Azure OpenAI, and Codex transports.
 
 ## Tool-Using Agents
 
