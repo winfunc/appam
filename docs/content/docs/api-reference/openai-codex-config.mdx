@@ -19,6 +19,7 @@ pub struct OpenAICodexConfig {
     pub stream: bool,
     pub reasoning: Option<ReasoningConfig>,
     pub text_verbosity: Option<TextVerbosity>,
+    pub service_tier: Option<ServiceTier>,
     pub retry: Option<RetryConfig>,
     pub auth_file: PathBuf,
     pub originator: String,
@@ -31,6 +32,7 @@ pub struct OpenAICodexConfig {
 - `model = "gpt-5.5"`
 - `max_output_tokens = Some(4096)`
 - `stream = true`
+- `service_tier = None`
 - `retry = Some(RetryConfig::default())`
 - `auth_file = ~/.appam/auth.json`
 - `originator = "pi"`
@@ -62,6 +64,11 @@ The auth-cache path defaults to `~/.appam/auth.json` and can be overridden with 
 .openai_codex_access_token(...)
 .openai_reasoning(...)
 .openai_text_verbosity(...)
+.openai_service_tier(...)
 ```
+
+For Codex subscription requests, `ServiceTier::Priority` sends
+`service_tier: "priority"`, which is the runtime wire value for Codex Fast
+mode. Standard requests leave `service_tier` unset.
 
 Shared runtime overrides such as `.model(...)`, `.max_tokens(...)`, `.temperature(...)`, `.top_p(...)`, and `.retry(...)` also flow into the Codex config.

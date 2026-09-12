@@ -76,6 +76,28 @@ fn test_agent_builder_applies_openai_prompt_cache_key() {
 }
 
 #[test]
+fn test_agent_builder_applies_priority_tier_to_openai_and_codex() {
+    let agent = AgentBuilder::new("test-agent")
+        .provider(LlmProvider::OpenAICodex)
+        .system_prompt("Test prompt")
+        .openai_service_tier(appam::llm::openai::ServiceTier::Priority)
+        .build()
+        .unwrap();
+
+    let mut config = appam::config::AppConfig::default();
+    agent.apply_config_overrides(&mut config);
+
+    assert_eq!(
+        config.openai.service_tier,
+        Some(appam::llm::openai::ServiceTier::Priority)
+    );
+    assert_eq!(
+        config.openai_codex.service_tier,
+        Some(appam::llm::openai::ServiceTier::Priority)
+    );
+}
+
+#[test]
 fn test_agent_builder_with_tool() {
     let agent = AgentBuilder::new("test-agent")
         .system_prompt("Test prompt")

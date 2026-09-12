@@ -26,7 +26,7 @@ use crate::llm::openai::streaming::is_chunk_error_recoverable;
 use crate::llm::openai::types::{Reasoning, ResponseCreateParams, ResponseTextConfig, ToolChoice};
 use crate::llm::openai::{
     model_supports_sampling_parameters, normalize_openai_model, ReasoningEffort, RetryConfig,
-    TextVerbosity,
+    ServiceTier, TextVerbosity,
 };
 use crate::llm::provider::{LlmClient, ProviderFailureCapture};
 use crate::llm::unified::{UnifiedContentBlock, UnifiedMessage, UnifiedTool, UnifiedToolCall};
@@ -221,7 +221,16 @@ impl OpenAICodexClient {
                 effort: resolved_effort.map(reasoning_effort_to_string),
                 summary: reasoning.summary.map(reasoning_summary_to_string),
             }),
-            service_tier: None,
+            service_tier: self.config.service_tier.map(|tier| {
+                match tier {
+                    ServiceTier::Auto => "auto",
+                    ServiceTier::Default => "default",
+                    ServiceTier::Flex => "flex",
+                    ServiceTier::Scale => "scale",
+                    ServiceTier::Priority => "priority",
+                }
+                .to_string()
+            }),
             conversation: None,
             previous_response_id: None,
             background: None,
@@ -1246,6 +1255,7 @@ mod tests {
             serialized.get("store").and_then(Value::as_bool),
             Some(false)
         );
+        assert!(serialized.get("service_tier").is_none());
     }
 
     #[test]
@@ -1284,6 +1294,27 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_build_request_body_sends_priority_for_codex_fast_mode() {
+        let client = OpenAICodexClient::new(OpenAICodexConfig {
+            access_token: Some(mock_token("acc_fast")),
+            model: "gpt-5.6-sol".to_string(),
+            service_tier: Some(ServiceTier::Priority),
+            ..Default::default()
+        })
+        .expect("Codex fast-mode config should be valid");
+
+        let request = client
+            .build_request_body(&[UnifiedMessage::user("Inspect this target")], &[])
+            .expect("request body should build");
+        let serialized = serde_json::to_value(request).expect("request should serialize");
+
+        assert_eq!(
+            serialized.get("service_tier").and_then(Value::as_str),
+            Some("priority")
+        );
     }
 
     #[test]

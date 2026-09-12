@@ -740,14 +740,15 @@ impl AgentBuilder {
         self
     }
 
-    /// Set OpenAI service tier for request prioritization.
+    /// Set the service tier for direct OpenAI and Codex subscription requests.
     ///
     /// Service tiers control request routing and queueing:
     /// - `Auto`: Default routing based on account settings
     /// - `Default`: Standard routing for general use
     /// - `Scale`: High-throughput workloads with increased concurrency limits
     /// - `Flex`: Cost-optimized with flexible latency
-    /// - `Priority`: Lowest-latency routing for time-sensitive requests
+    /// - `Priority`: Lowest-latency routing for time-sensitive requests and
+    ///   the runtime representation of Codex Fast mode
     ///
     /// # Examples
     ///

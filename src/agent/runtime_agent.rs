@@ -454,6 +454,7 @@ impl Agent for RuntimeAgent {
         // Apply OpenAI-specific overrides
         if let Some(service_tier) = self.openai_service_tier {
             cfg.openai.service_tier = Some(service_tier);
+            cfg.openai_codex.service_tier = Some(service_tier);
         }
         if let Some(text_verbosity) = self.openai_text_verbosity {
             cfg.openai.text_verbosity = Some(text_verbosity);

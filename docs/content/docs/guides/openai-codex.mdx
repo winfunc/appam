@@ -76,6 +76,20 @@ rules on the Codex subscription transport: their model-aware default remains
 Appam preserves the selected model identifier in requests; unknown suffixed
 variants continue to use the generic capability rules.
 
+Codex Fast mode is independent of reasoning effort. Request it with the shared
+OpenAI service-tier builder option:
+
+```rust
+let agent = AgentBuilder::new("codex-fast")
+    .provider(LlmProvider::OpenAICodex)
+    .model("gpt-5.6-sol")
+    .system_prompt("You are a coding assistant.")
+    .openai_service_tier(ServiceTier::Priority)
+    .build()?;
+```
+
+This serializes `service_tier: "priority"` in the Codex request body.
+
 ## Example Binary
 
 ```bash

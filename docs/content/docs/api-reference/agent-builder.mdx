@@ -59,7 +59,11 @@ pub fn openai_pricing_model(self, model: impl Into<String>) -> Self
 
 ```rust
 pub fn openai_codex_access_token(self, token: impl Into<String>) -> Self
+pub fn openai_service_tier(self, tier: openai::ServiceTier) -> Self
 ```
+
+`openai_service_tier(ServiceTier::Priority)` requests Codex Fast mode when the
+selected provider is `OpenAICodex`.
 
 ### OpenRouter
 

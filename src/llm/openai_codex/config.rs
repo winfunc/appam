@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::llm::openai::{
     model_supports_sampling_parameters, normalize_openai_model, ReasoningConfig, ReasoningEffort,
-    RetryConfig, TextVerbosity,
+    RetryConfig, ServiceTier, TextVerbosity,
 };
 
 /// Configuration for the OpenAI Codex subscription-backed provider.
@@ -84,6 +84,14 @@ pub struct OpenAICodexConfig {
     /// OpenAI-compatible text verbosity configuration.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text_verbosity: Option<TextVerbosity>,
+
+    /// Service tier requested from the Codex subscription backend.
+    ///
+    /// `Priority` is the runtime representation of Codex Fast mode. The
+    /// persisted Codex CLI spelling is `fast`, but the request wire value is
+    /// `priority`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<ServiceTier>,
 
     /// Retry policy for transient network and backend failures.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -201,6 +209,7 @@ impl Default for OpenAICodexConfig {
             stream: Self::default_stream(),
             reasoning: None,
             text_verbosity: None,
+            service_tier: None,
             retry: Some(RetryConfig::default()),
             auth_file: Self::default_auth_file(),
             originator: Self::default_originator(),
