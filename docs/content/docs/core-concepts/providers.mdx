@@ -165,11 +165,14 @@ export OPENAI_API_KEY="sk-..."
 ```bash
 export OPENAI_CODEX_MODEL="gpt-5.5"                    # optional
 export OPENAI_CODEX_ACCESS_TOKEN="eyJ..."              # optional explicit token
+export OPENAI_CODEX_AUTH_FILES="$HOME/.appam/one.json:$HOME/.appam/two.json" # optional pool
 export OPENAI_CODEX_AUTH_FILE="$HOME/.appam/auth.json" # optional auth cache override
 ```
 
-When `OPENAI_CODEX_ACCESS_TOKEN` is unset, the provider refreshes credentials from
-the local auth cache in `OPENAI_CODEX_AUTH_FILE` (default: `~/.appam/auth.json`).
+When `OPENAI_CODEX_ACCESS_TOKEN` is unset, the provider uses the sticky
+round-robin pool in `OPENAI_CODEX_AUTH_FILES` when configured. Otherwise it
+refreshes the local auth cache in `OPENAI_CODEX_AUTH_FILE` (default:
+`~/.appam/auth.json`).
 
 ### OpenRouter
 

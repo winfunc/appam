@@ -358,6 +358,7 @@ impl RateLimitConfig {
 /// - `OPENAI_CODEX_MODEL`: Codex model identifier
 /// - `OPENAI_CODEX_BASE_URL`: Codex backend base URL override
 /// - `OPENAI_CODEX_ACCESS_TOKEN`: Explicit ChatGPT OAuth access token override
+/// - `OPENAI_CODEX_AUTH_FILES`: Platform-separated OAuth auth-file pool
 /// - `OPENAI_CODEX_AUTH_FILE`: Auth cache file path override
 ///
 /// ## Vertex

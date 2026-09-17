@@ -2,23 +2,30 @@
 //!
 //! The Codex backend accepts ChatGPT OAuth access tokens rather than Platform
 //! API keys. Appam therefore stores refreshable ChatGPT credentials in a local
-//! file cache and refreshes them under a file lock before expiry.
+//! file cache and refreshes them under a file lock before expiry. When
+//! `OPENAI_CODEX_AUTH_FILES` lists multiple caches, runtime clients share a
+//! sticky round-robin pool and fail over only after confirmed usage exhaustion.
 //!
 //! # Security model
 //!
 //! - credentials are stored only on the local filesystem
 //! - the cache file is created with `0600` permissions on Unix platforms
 //! - refresh operations are serialized with an exclusive file lock
+//! - each account remains isolated in its own backward-compatible cache file
 //! - access and refresh tokens are never logged
 //!
 //! This module is intended for trusted local developer environments. Do not
 //! copy the cache file into public or multi-tenant environments.
 
+use std::collections::{HashMap, HashSet};
+use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
 use base64::engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD};
@@ -45,6 +52,12 @@ const JWT_CLAIM_PATH: &str = "https://api.openai.com/auth";
 const PROVIDER_KEY: &str = "openai-codex";
 /// Pre-expiry refresh buffer to avoid racing near-expired tokens.
 const TOKEN_REFRESH_SKEW_MS: u64 = 60_000;
+/// Environment variable containing a platform-separated list of auth files.
+pub const OPENAI_CODEX_AUTH_FILES_ENV: &str = "OPENAI_CODEX_AUTH_FILES";
+/// Maximum number of credentials accepted from one process configuration.
+const MAX_AUTH_FILES: usize = 16;
+/// Short suppression window for auth files that cannot currently be resolved.
+const AUTH_RESOLUTION_COOLDOWN: Duration = Duration::from_secs(60);
 
 /// Fully resolved ChatGPT OAuth credentials for the Codex provider.
 ///
@@ -196,6 +209,220 @@ impl OpenAICodexAuthStorage {
     }
 }
 
+/// A resolved credential slot selected from a process-shared auth-file pool.
+#[derive(Debug)]
+pub(crate) struct OpenAICodexCredentialLease {
+    /// Zero-based slot index. Safe to log; it contains no account identifier.
+    pub(crate) index: usize,
+    /// Resolved bearer credential and account metadata.
+    pub(crate) auth: ResolvedOpenAICodexAuth,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct CredentialHealth {
+    unavailable_until: Option<Instant>,
+}
+
+/// Process-shared pool of independently refreshable Codex OAuth files.
+///
+/// Selection is round-robin for new clients. A client passes its previously
+/// selected index back on later requests to remain sticky to the same account.
+/// Provider quota failures can temporarily suppress one slot so new and
+/// existing clients fail over to another healthy credential.
+#[derive(Debug)]
+pub(crate) struct OpenAICodexCredentialPool {
+    storages: Vec<OpenAICodexAuthStorage>,
+    next: AtomicUsize,
+    health: Mutex<Vec<CredentialHealth>>,
+}
+
+impl OpenAICodexCredentialPool {
+    fn new(paths: Vec<PathBuf>) -> Self {
+        let storages = paths
+            .into_iter()
+            .map(OpenAICodexAuthStorage::new)
+            .collect::<Vec<_>>();
+        let health = vec![CredentialHealth::default(); storages.len()];
+        Self {
+            storages,
+            next: AtomicUsize::new(0),
+            health: Mutex::new(health),
+        }
+    }
+
+    /// Return the number of configured credential slots.
+    pub(crate) fn len(&self) -> usize {
+        self.storages.len()
+    }
+
+    /// Resolve the sticky slot when healthy, otherwise choose the next healthy
+    /// credential in round-robin order.
+    pub(crate) async fn resolve(
+        &self,
+        preferred: Option<usize>,
+        excluded: &HashSet<usize>,
+    ) -> Result<OpenAICodexCredentialLease> {
+        let mut candidates = Vec::with_capacity(self.storages.len());
+        if let Some(index) = preferred.filter(|index| {
+            *index < self.storages.len() && !excluded.contains(index) && self.is_available(*index)
+        }) {
+            candidates.push(index);
+        }
+
+        let start = candidates.first().map_or_else(
+            || self.next.fetch_add(1, Ordering::Relaxed) % self.storages.len(),
+            |index| (index + 1) % self.storages.len(),
+        );
+        for offset in 0..self.storages.len() {
+            let index = (start + offset) % self.storages.len();
+            if !candidates.contains(&index)
+                && !excluded.contains(&index)
+                && self.is_available(index)
+            {
+                candidates.push(index);
+            }
+        }
+
+        let mut failed_slots = Vec::new();
+        for index in candidates {
+            match self.storages[index].resolve_credentials().await {
+                Ok(Some(credentials)) => {
+                    return Ok(OpenAICodexCredentialLease {
+                        index,
+                        auth: ResolvedOpenAICodexAuth {
+                            access_token: credentials.access,
+                            account_id: credentials.account_id,
+                            source: OpenAICodexAuthSource::CachedOAuth,
+                        },
+                    });
+                }
+                Ok(None) => failed_slots.push(index + 1),
+                Err(_) => {
+                    warn!(
+                        credential_slot = index + 1,
+                        "OpenAI Codex credential slot could not be resolved"
+                    );
+                    if self.storages.len() > 1 {
+                        self.mark_unavailable(index, AUTH_RESOLUTION_COOLDOWN);
+                    }
+                    failed_slots.push(index + 1);
+                }
+            }
+        }
+
+        if failed_slots.is_empty() {
+            bail!("All configured OpenAI Codex credentials are temporarily unavailable");
+        }
+
+        bail!(
+            "No usable OpenAI Codex credential was found in configured slot(s): {}",
+            failed_slots
+                .into_iter()
+                .map(|slot| slot.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+
+    /// Suppress a credential slot until its provider cooldown elapses.
+    pub(crate) fn mark_unavailable(&self, index: usize, duration: Duration) {
+        let Some(unavailable_until) = Instant::now().checked_add(duration) else {
+            return;
+        };
+        let mut health = self
+            .health
+            .lock()
+            .expect("openai codex credential health mutex poisoned");
+        if let Some(slot) = health.get_mut(index) {
+            slot.unavailable_until = Some(unavailable_until);
+        }
+    }
+
+    fn is_available(&self, index: usize) -> bool {
+        let mut health = self
+            .health
+            .lock()
+            .expect("openai codex credential health mutex poisoned");
+        let Some(slot) = health.get_mut(index) else {
+            return false;
+        };
+        if slot
+            .unavailable_until
+            .is_some_and(|deadline| deadline > Instant::now())
+        {
+            return false;
+        }
+        slot.unavailable_until = None;
+        true
+    }
+}
+
+type CredentialPoolRegistry = HashMap<Vec<PathBuf>, Arc<OpenAICodexCredentialPool>>;
+
+static CREDENTIAL_POOLS: OnceLock<Mutex<CredentialPoolRegistry>> = OnceLock::new();
+
+/// Return the process-shared pool for an ordered set of credential files.
+pub(crate) fn shared_openai_codex_credential_pool(
+    paths: Vec<PathBuf>,
+) -> Result<Arc<OpenAICodexCredentialPool>> {
+    let paths = validate_auth_file_paths(paths)?;
+    let registry = CREDENTIAL_POOLS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut registry = registry
+        .lock()
+        .expect("openai codex credential pool registry mutex poisoned");
+    if let Some(pool) = registry.get(&paths) {
+        return Ok(Arc::clone(pool));
+    }
+
+    let pool = Arc::new(OpenAICodexCredentialPool::new(paths.clone()));
+    registry.insert(paths, Arc::clone(&pool));
+    Ok(pool)
+}
+
+/// Resolve the configured Codex auth-file list without changing the legacy
+/// single-file configuration contract.
+///
+/// `OPENAI_CODEX_AUTH_FILES`, when non-empty, is parsed with the platform path
+/// separator (`:` on Unix and `;` on Windows) and overrides `fallback`. When it
+/// is unset, the existing `OPENAI_CODEX_AUTH_FILE`/`auth_file` behavior remains
+/// unchanged through the supplied fallback path.
+///
+/// # Errors
+///
+/// Returns an error for an empty list, duplicate-only list, or more than 16
+/// credential paths. Paths are not required to exist yet so operators can
+/// configure a pool before completing each interactive login.
+pub fn configured_openai_codex_auth_files(fallback: &Path) -> Result<Vec<PathBuf>> {
+    let Some(raw) = std::env::var_os(OPENAI_CODEX_AUTH_FILES_ENV) else {
+        return Ok(vec![fallback.to_path_buf()]);
+    };
+    if raw.is_empty() {
+        bail!("{OPENAI_CODEX_AUTH_FILES_ENV} must contain at least one path");
+    }
+    parse_auth_file_paths(&raw)
+}
+
+fn parse_auth_file_paths(raw: &OsStr) -> Result<Vec<PathBuf>> {
+    validate_auth_file_paths(std::env::split_paths(raw).collect())
+}
+
+fn validate_auth_file_paths(paths: Vec<PathBuf>) -> Result<Vec<PathBuf>> {
+    let mut unique = Vec::with_capacity(paths.len());
+    for path in paths {
+        if path.as_os_str().is_empty() || unique.contains(&path) {
+            continue;
+        }
+        unique.push(path);
+    }
+    if unique.is_empty() {
+        bail!("At least one OpenAI Codex auth file must be configured");
+    }
+    if unique.len() > MAX_AUTH_FILES {
+        bail!("OpenAI Codex credential pools support at most {MAX_AUTH_FILES} auth files");
+    }
+    Ok(unique)
+}
+
 /// Resolve Codex authentication for a request.
 ///
 /// # Resolution order
@@ -207,27 +434,8 @@ pub async fn resolve_openai_codex_auth(
     configured_access_token: Option<&str>,
     auth_file: &Path,
 ) -> Result<ResolvedOpenAICodexAuth> {
-    if let Some(token) = configured_access_token.filter(|token| !token.trim().is_empty()) {
-        let account_id = extract_account_id(token)
-            .ok_or_else(|| anyhow!("Failed to extract ChatGPT account ID from configured token"))?;
-        return Ok(ResolvedOpenAICodexAuth {
-            access_token: token.to_string(),
-            account_id,
-            source: OpenAICodexAuthSource::ConfiguredToken,
-        });
-    }
-
-    if let Ok(token) = std::env::var("OPENAI_CODEX_ACCESS_TOKEN") {
-        if !token.trim().is_empty() {
-            let account_id = extract_account_id(&token).ok_or_else(|| {
-                anyhow!("Failed to extract ChatGPT account ID from OPENAI_CODEX_ACCESS_TOKEN")
-            })?;
-            return Ok(ResolvedOpenAICodexAuth {
-                access_token: token,
-                account_id,
-                source: OpenAICodexAuthSource::ConfiguredToken,
-            });
-        }
+    if let Some(auth) = resolve_explicit_openai_codex_auth(configured_access_token)? {
+        return Ok(auth);
     }
 
     let storage = OpenAICodexAuthStorage::new(auth_file.to_path_buf());
@@ -243,6 +451,84 @@ pub async fn resolve_openai_codex_auth(
         "Missing OpenAI Codex credentials. Set OPENAI_CODEX_ACCESS_TOKEN or authenticate into {}",
         auth_file.display()
     );
+}
+
+/// Resolve Codex authentication from an ordered list of independent auth
+/// files while preserving explicit-token precedence.
+///
+/// This helper is intended for preflight and diagnostics. Runtime clients use
+/// the shared credential pool so new sessions are distributed round-robin.
+///
+/// # Errors
+///
+/// Returns an error when an explicit token is invalid or none of the supplied
+/// files contains refreshable credentials.
+pub async fn resolve_openai_codex_auth_from_files(
+    configured_access_token: Option<&str>,
+    auth_files: &[PathBuf],
+) -> Result<ResolvedOpenAICodexAuth> {
+    if let Some(auth) = resolve_explicit_openai_codex_auth(configured_access_token)? {
+        return Ok(auth);
+    }
+    let auth_files = validate_auth_file_paths(auth_files.to_vec())?;
+    let mut failed_slots = Vec::new();
+    for (index, auth_file) in auth_files.iter().enumerate() {
+        let storage = OpenAICodexAuthStorage::new(auth_file);
+        match storage.resolve_credentials().await {
+            Ok(Some(credentials)) => {
+                return Ok(ResolvedOpenAICodexAuth {
+                    access_token: credentials.access,
+                    account_id: credentials.account_id,
+                    source: OpenAICodexAuthSource::CachedOAuth,
+                });
+            }
+            Ok(None) => failed_slots.push(index + 1),
+            Err(_) => {
+                warn!(
+                    credential_slot = index + 1,
+                    "OpenAI Codex credential slot failed preflight"
+                );
+                failed_slots.push(index + 1);
+            }
+        }
+    }
+
+    bail!(
+        "Missing OpenAI Codex credentials in configured slot(s): {}",
+        failed_slots
+            .into_iter()
+            .map(|slot| slot.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+fn resolve_explicit_openai_codex_auth(
+    configured_access_token: Option<&str>,
+) -> Result<Option<ResolvedOpenAICodexAuth>> {
+    if let Some(token) = configured_access_token.filter(|token| !token.trim().is_empty()) {
+        let account_id = extract_account_id(token)
+            .ok_or_else(|| anyhow!("Failed to extract ChatGPT account ID from configured token"))?;
+        return Ok(Some(ResolvedOpenAICodexAuth {
+            access_token: token.to_string(),
+            account_id,
+            source: OpenAICodexAuthSource::ConfiguredToken,
+        }));
+    }
+
+    if let Ok(token) = std::env::var("OPENAI_CODEX_ACCESS_TOKEN") {
+        if !token.trim().is_empty() {
+            let account_id = extract_account_id(&token).ok_or_else(|| {
+                anyhow!("Failed to extract ChatGPT account ID from OPENAI_CODEX_ACCESS_TOKEN")
+            })?;
+            return Ok(Some(ResolvedOpenAICodexAuth {
+                access_token: token,
+                account_id,
+                source: OpenAICodexAuthSource::ConfiguredToken,
+            }));
+        }
+    }
+    Ok(None)
 }
 
 /// Run an interactive browser login for OpenAI Codex and persist the result.
@@ -795,6 +1081,17 @@ mod tests {
         format!("{header}.{payload}.signature")
     }
 
+    fn store_mock_credentials(path: &Path, account_id: &str) {
+        OpenAICodexAuthStorage::new(path)
+            .store_credentials(&OpenAICodexCredentials {
+                access: mock_token(account_id),
+                refresh: format!("refresh_{account_id}"),
+                expires: u64::MAX,
+                account_id: account_id.to_string(),
+            })
+            .unwrap();
+    }
+
     #[test]
     fn test_extract_account_id() {
         assert_eq!(
@@ -899,5 +1196,109 @@ mod tests {
         assert!(default_auth_file_path()
             .to_string_lossy()
             .ends_with(".appam/auth.json"));
+    }
+
+    #[test]
+    fn test_auth_file_pool_validation_deduplicates_without_reordering() {
+        let paths = validate_auth_file_paths(vec![
+            PathBuf::from("account-a.json"),
+            PathBuf::from("account-b.json"),
+            PathBuf::from("account-a.json"),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            paths,
+            vec![
+                PathBuf::from("account-a.json"),
+                PathBuf::from("account-b.json")
+            ]
+        );
+        assert!(validate_auth_file_paths(Vec::new()).is_err());
+    }
+
+    #[test]
+    fn test_auth_file_pool_parses_platform_path_list() {
+        let raw = std::env::join_paths(["account-a.json", "account-b.json"]).unwrap();
+        assert_eq!(
+            parse_auth_file_paths(&raw).unwrap(),
+            vec![
+                PathBuf::from("account-a.json"),
+                PathBuf::from("account-b.json")
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_auth_file_pool_is_round_robin_and_sticky() {
+        let temp_dir = tempdir().unwrap();
+        let first = temp_dir.path().join("first.json");
+        let second = temp_dir.path().join("second.json");
+        store_mock_credentials(&first, "acc_first");
+        store_mock_credentials(&second, "acc_second");
+        let pool = OpenAICodexCredentialPool::new(vec![first, second]);
+        let excluded = HashSet::new();
+
+        let first_lease = pool.resolve(None, &excluded).await.unwrap();
+        assert_eq!(first_lease.index, 0);
+        assert_eq!(first_lease.auth.account_id, "acc_first");
+
+        let sticky_lease = pool
+            .resolve(Some(first_lease.index), &excluded)
+            .await
+            .unwrap();
+        assert_eq!(sticky_lease.index, 0);
+        assert_eq!(sticky_lease.auth.account_id, "acc_first");
+
+        let second_lease = pool.resolve(None, &excluded).await.unwrap();
+        assert_eq!(second_lease.index, 1);
+        assert_eq!(second_lease.auth.account_id, "acc_second");
+    }
+
+    #[tokio::test]
+    async fn test_auth_file_pool_skips_unavailable_and_excluded_slots() {
+        let temp_dir = tempdir().unwrap();
+        let first = temp_dir.path().join("first.json");
+        let second = temp_dir.path().join("second.json");
+        store_mock_credentials(&first, "acc_first");
+        store_mock_credentials(&second, "acc_second");
+        let pool = OpenAICodexCredentialPool::new(vec![first, second]);
+
+        pool.mark_unavailable(0, Duration::from_secs(60));
+        let lease = pool.resolve(None, &HashSet::new()).await.unwrap();
+        assert_eq!(lease.index, 1);
+
+        let excluded = HashSet::from([1]);
+        assert!(pool.resolve(None, &excluded).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_single_auth_file_resolution_failure_is_not_cooled_down() {
+        let temp_dir = tempdir().unwrap();
+        let auth_file = temp_dir.path().join("single.json");
+        std::fs::write(&auth_file, "not-json").unwrap();
+        let pool = OpenAICodexCredentialPool::new(vec![auth_file.clone()]);
+
+        assert!(pool.resolve(None, &HashSet::new()).await.is_err());
+        std::fs::remove_file(&auth_file).unwrap();
+        store_mock_credentials(&auth_file, "acc_recovered");
+
+        let recovered = pool.resolve(None, &HashSet::new()).await.unwrap();
+        assert_eq!(recovered.auth.account_id, "acc_recovered");
+    }
+
+    #[tokio::test]
+    async fn test_multi_file_preflight_uses_first_resolvable_credential() {
+        let temp_dir = tempdir().unwrap();
+        let missing = temp_dir.path().join("missing.json");
+        let usable = temp_dir.path().join("usable.json");
+        store_mock_credentials(&usable, "acc_usable");
+
+        let resolved = resolve_openai_codex_auth_from_files(None, &[missing, usable])
+            .await
+            .unwrap();
+
+        assert_eq!(resolved.account_id, "acc_usable");
+        assert_eq!(resolved.source, OpenAICodexAuthSource::CachedOAuth);
     }
 }

@@ -217,7 +217,18 @@ check_openai_codex_env() {
         return 0
     fi
 
-    local auth_file="${OPENAI_CODEX_AUTH_FILE:-$HOME/.appam/auth.json}"
+    if [ -n "${OPENAI_CODEX_AUTH_FILES:-}" ]; then
+        local auth_file
+        local auth_files=()
+        IFS=':' read -r -a auth_files <<< "$OPENAI_CODEX_AUTH_FILES"
+        for auth_file in "${auth_files[@]}"; do
+            if [ -f "$auth_file" ] && grep -q '"openai-codex"' "$auth_file"; then
+                return 0
+            fi
+        done
+    fi
+
+    auth_file="${OPENAI_CODEX_AUTH_FILE:-$HOME/.appam/auth.json}"
     if [ -f "$auth_file" ] && grep -q '"openai-codex"' "$auth_file"; then
         return 0
     fi
@@ -250,7 +261,7 @@ run_example() {
         log_info "Environment: Azure Anthropic requirements are set ✓"
     elif [ "$example" = "coding-agent-openai-codex" ]; then
         if ! check_openai_codex_env; then
-            log_warning "Skipping $example - requires OPENAI_CODEX_ACCESS_TOKEN or an auth cache entry in \${OPENAI_CODEX_AUTH_FILE:-$HOME/.appam/auth.json}"
+            log_warning "Skipping $example - requires OPENAI_CODEX_ACCESS_TOKEN, OPENAI_CODEX_AUTH_FILES, or an auth cache entry in \${OPENAI_CODEX_AUTH_FILE:-$HOME/.appam/auth.json}"
             RESULTS["$example"]="SKIPPED"
             ((SKIPPED++))
             return 0
@@ -521,7 +532,7 @@ main() {
         echo "Required environment variables:"
         echo "  - ANTHROPIC_API_KEY for coding-agent-anthropic"
         echo "  - AZURE_API_KEY plus AZURE_ANTHROPIC_BASE_URL or AZURE_ANTHROPIC_RESOURCE for coding-agent-azure-anthropic"
-        echo "  - OPENAI_CODEX_ACCESS_TOKEN or an auth cache entry for coding-agent-openai-codex"
+        echo "  - OPENAI_CODEX_ACCESS_TOKEN, OPENAI_CODEX_AUTH_FILES, or an auth cache entry for coding-agent-openai-codex"
         echo "  - OPENAI_API_KEY for coding-agent-openai-responses"
         echo "  - OPENROUTER_API_KEY for coding-agent-openrouter-completions"
         echo "  - OPENROUTER_API_KEY for coding-agent-openrouter-responses"

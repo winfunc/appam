@@ -12,11 +12,14 @@ credentials from its local auth cache.
 ```bash
 export OPENAI_CODEX_MODEL="gpt-5.5"                    # optional
 export OPENAI_CODEX_ACCESS_TOKEN="eyJ..."              # optional explicit token
+export OPENAI_CODEX_AUTH_FILES="$HOME/.appam/one.json:$HOME/.appam/two.json" # optional pool
 export OPENAI_CODEX_AUTH_FILE="$HOME/.appam/auth.json" # optional auth cache override
 ```
 
-If `OPENAI_CODEX_ACCESS_TOKEN` is unset, Appam looks for an `openai-codex`
-OAuth entry in `OPENAI_CODEX_AUTH_FILE` and refreshes it before expiry.
+If `OPENAI_CODEX_ACCESS_TOKEN` is unset, Appam first checks the platform-separated
+auth-file list in `OPENAI_CODEX_AUTH_FILES`. Otherwise it looks for an
+`openai-codex` OAuth entry in `OPENAI_CODEX_AUTH_FILE`. Every auth file retains
+the existing schema and independent refresh lock.
 
 ## Construction
 
@@ -50,10 +53,20 @@ The Codex provider resolves auth in this order:
 
 1. `OpenAICodexConfig.access_token`
 2. `OPENAI_CODEX_ACCESS_TOKEN`
-3. cached OAuth credentials in `OPENAI_CODEX_AUTH_FILE`
+3. cached OAuth credentials in `OPENAI_CODEX_AUTH_FILES`
+4. cached OAuth credentials in `OPENAI_CODEX_AUTH_FILE`
+
+With multiple auth files, new client sessions select healthy credentials in
+round-robin order and remain sticky to that credential. A structured
+`usage_limit_reached` or `usage_not_included` response suppresses the exhausted
+slot for `Retry-After`, or for one hour when the provider supplies no reset
+hint, and retries the request with the next healthy credential. Network errors,
+server errors, and ordinary `rate_limit_exceeded` responses keep the normal
+same-account backoff policy.
 
 For trusted local CLI workflows, use the example binary to trigger the browser
-login flow and persist credentials to `~/.appam/auth.json`.
+login flow and persist credentials. Authenticate each pool path separately
+before enabling the full `OPENAI_CODEX_AUTH_FILES` list.
 
 ## Reasoning
 

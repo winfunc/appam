@@ -28,8 +28,9 @@ pub mod client;
 pub mod config;
 
 pub use auth::{
-    login_openai_codex_interactive, resolve_openai_codex_auth, OpenAICodexAuthSource,
-    OpenAICodexAuthStorage, OpenAICodexCredentials, ResolvedOpenAICodexAuth,
+    configured_openai_codex_auth_files, login_openai_codex_interactive, resolve_openai_codex_auth,
+    resolve_openai_codex_auth_from_files, OpenAICodexAuthSource, OpenAICodexAuthStorage,
+    OpenAICodexCredentials, ResolvedOpenAICodexAuth, OPENAI_CODEX_AUTH_FILES_ENV,
 };
 pub use client::OpenAICodexClient;
 pub use config::{resolve_reasoning_effort_for_codex_model, OpenAICodexConfig};

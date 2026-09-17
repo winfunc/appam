@@ -86,7 +86,7 @@ Set credentials for the provider you want to use:
 | --- | --- |
 | Anthropic | `ANTHROPIC_API_KEY` |
 | OpenAI | `OPENAI_API_KEY` |
-| OpenAI Codex | `OPENAI_CODEX_ACCESS_TOKEN` or a cached login in `~/.appam/auth.json` |
+| OpenAI Codex | `OPENAI_CODEX_ACCESS_TOKEN`, `OPENAI_CODEX_AUTH_FILES`, or a cached login in `~/.appam/auth.json` |
 | OpenRouter | `OPENROUTER_API_KEY` |
 | Vertex | `GOOGLE_VERTEX_API_KEY`, `GOOGLE_API_KEY`, `GEMINI_API_KEY`, or `GOOGLE_VERTEX_ACCESS_TOKEN` |
 | Azure OpenAI | `AZURE_OPENAI_API_KEY` and `AZURE_OPENAI_RESOURCE` |
@@ -98,6 +98,7 @@ Common model override variables:
 - `ANTHROPIC_MODEL`
 - `OPENAI_MODEL`
 - `OPENAI_CODEX_MODEL`
+- `OPENAI_CODEX_AUTH_FILES`
 - `OPENROUTER_MODEL`
 - `GOOGLE_VERTEX_MODEL`
 - `AZURE_OPENAI_MODEL`

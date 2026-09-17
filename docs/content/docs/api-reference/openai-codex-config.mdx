@@ -43,9 +43,14 @@ Runtime authentication is resolved in this order:
 
 1. `OpenAICodexConfig.access_token`
 2. `OPENAI_CODEX_ACCESS_TOKEN`
-3. cached OAuth credentials in `auth_file`
+3. cached OAuth credentials listed by `OPENAI_CODEX_AUTH_FILES`
+4. cached OAuth credentials in `auth_file`
 
-The auth-cache path defaults to `~/.appam/auth.json` and can be overridden with `OPENAI_CODEX_AUTH_FILE`.
+The auth-cache path defaults to `~/.appam/auth.json` and can be overridden with
+`OPENAI_CODEX_AUTH_FILE`. `OPENAI_CODEX_AUTH_FILES` is intentionally resolved by
+the client rather than added as a required struct field, preserving source
+compatibility for existing `OpenAICodexConfig` struct literals. Programmatic
+callers can use `OpenAICodexClient::new_with_auth_files(...)`.
 
 ## Validation behavior
 

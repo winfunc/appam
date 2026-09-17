@@ -23,10 +23,11 @@ use crate::llm::openai::{
 ///
 /// 1. `access_token` set directly on this config
 /// 2. `OPENAI_CODEX_ACCESS_TOKEN`
-/// 3. Cached OAuth credentials in `auth_file`
+/// 3. Cached OAuth credentials listed in `OPENAI_CODEX_AUTH_FILES`
+/// 4. Cached OAuth credentials in `auth_file`
 ///
-/// The cached credential flow is intended for trusted local developer machines.
-/// Do not copy or expose the auth file in untrusted environments.
+/// The cached credential flow is intended for trusted machines. Do not copy or
+/// expose auth files in untrusted environments.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenAICodexConfig {
     /// Explicit ChatGPT OAuth access token override.

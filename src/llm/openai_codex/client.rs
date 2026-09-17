@@ -17,7 +17,10 @@ use serde_json::Value;
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
-use super::auth::resolve_openai_codex_auth;
+use super::auth::{
+    configured_openai_codex_auth_files, resolve_openai_codex_auth,
+    shared_openai_codex_credential_pool, OpenAICodexCredentialPool,
+};
 use super::config::{resolve_reasoning_effort_for_codex_model, OpenAICodexConfig};
 use crate::llm::openai::convert::{
     extract_instructions, from_unified_messages, from_unified_tools,
@@ -40,9 +43,19 @@ pub struct OpenAICodexClient {
     http_client: reqwest::Client,
     config: OpenAICodexConfig,
     session_id: String,
+    credential_pool: Arc<OpenAICodexCredentialPool>,
+    selected_credential_slot: Arc<tokio::sync::Mutex<Option<usize>>>,
     latest_response_id: Arc<Mutex<Option<String>>>,
     last_failed_exchange: Arc<Mutex<Option<ProviderFailureCapture>>>,
 }
+
+#[derive(Debug)]
+struct PreparedCodexHeaders {
+    headers: HeaderMap,
+    credential_slot: Option<usize>,
+}
+
+const DEFAULT_USAGE_LIMIT_COOLDOWN: Duration = Duration::from_secs(60 * 60);
 
 impl OpenAICodexClient {
     /// Create a new OpenAI Codex client.
@@ -52,7 +65,34 @@ impl OpenAICodexClient {
     /// Returns an error when the configuration is invalid or the HTTP client
     /// cannot be created.
     pub fn new(config: OpenAICodexConfig) -> Result<Self> {
+        let auth_files = if Self::explicit_token_is_configured(&config) {
+            vec![config.auth_file.clone()]
+        } else {
+            configured_openai_codex_auth_files(&config.auth_file)?
+        };
+        Self::new_with_auth_files(config, auth_files)
+    }
+
+    /// Create a Codex client with an explicit ordered set of OAuth auth files.
+    ///
+    /// New clients sharing the same ordered file list use a process-wide pool.
+    /// Their first request is distributed round-robin, while later requests
+    /// remain sticky to the selected credential until the provider reports
+    /// that account's subscription usage is exhausted.
+    ///
+    /// Explicit access tokens configured on `config` or through
+    /// `OPENAI_CODEX_ACCESS_TOKEN` remain authoritative and bypass the pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the provider configuration is invalid, no auth
+    /// file is supplied, or the HTTP client cannot be created.
+    pub fn new_with_auth_files(
+        config: OpenAICodexConfig,
+        auth_files: Vec<std::path::PathBuf>,
+    ) -> Result<Self> {
         config.validate()?;
+        let credential_pool = shared_openai_codex_credential_pool(auth_files)?;
 
         let http_client = crate::http::client_pool::get_or_init_client(&config.base_url, |ctx| {
             let mut builder = reqwest::Client::builder()
@@ -77,9 +117,21 @@ impl OpenAICodexClient {
             http_client,
             config,
             session_id: uuid::Uuid::new_v4().to_string(),
+            credential_pool,
+            selected_credential_slot: Arc::new(tokio::sync::Mutex::new(None)),
             latest_response_id: Arc::new(Mutex::new(None)),
             last_failed_exchange: Arc::new(Mutex::new(None)),
         })
+    }
+
+    fn explicit_token_is_configured(config: &OpenAICodexConfig) -> bool {
+        config
+            .access_token
+            .as_deref()
+            .is_some_and(|token| !token.trim().is_empty())
+            || std::env::var("OPENAI_CODEX_ACCESS_TOKEN")
+                .ok()
+                .is_some_and(|token| !token.trim().is_empty())
     }
 
     /// Return the latest response identifier observed from Codex.
@@ -131,10 +183,28 @@ impl OpenAICodexClient {
         format!("{trimmed}/codex/responses")
     }
 
-    async fn build_headers(&self) -> Result<HeaderMap> {
-        let resolved_auth =
-            resolve_openai_codex_auth(self.config.access_token.as_deref(), &self.config.auth_file)
+    async fn build_headers_for_request(
+        &self,
+        excluded_slots: &HashSet<usize>,
+    ) -> Result<PreparedCodexHeaders> {
+        let (resolved_auth, credential_slot) = if Self::explicit_token_is_configured(&self.config) {
+            (
+                resolve_openai_codex_auth(
+                    self.config.access_token.as_deref(),
+                    &self.config.auth_file,
+                )
+                .await?,
+                None,
+            )
+        } else {
+            let mut selected = self.selected_credential_slot.lock().await;
+            let lease = self
+                .credential_pool
+                .resolve(*selected, excluded_slots)
                 .await?;
+            *selected = Some(lease.index);
+            (lease.auth, Some(lease.index))
+        };
 
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
@@ -163,7 +233,25 @@ impl OpenAICodexClient {
             HeaderValue::from_str(&self.session_id).context("Invalid OpenAI Codex session_id")?,
         );
 
-        Ok(headers)
+        Ok(PreparedCodexHeaders {
+            headers,
+            credential_slot,
+        })
+    }
+
+    #[cfg(test)]
+    async fn build_headers(&self) -> Result<HeaderMap> {
+        Ok(self
+            .build_headers_for_request(&HashSet::new())
+            .await?
+            .headers)
+    }
+
+    async fn release_credential_slot(&self, index: usize) {
+        let mut selected = self.selected_credential_slot.lock().await;
+        if *selected == Some(index) {
+            *selected = None;
+        }
     }
 
     fn build_request_body(
@@ -478,7 +566,7 @@ impl LlmClient for OpenAICodexClient {
         let request_body = self.build_request_body(messages, tools)?;
         let request_payload = serde_json::to_string_pretty(&request_body)?;
         let retry_config = self.retry_config();
-        let max_attempts = retry_config.max_retries.saturating_add(1).max(1);
+        let mut retries_remaining = retry_config.max_retries;
 
         let mut on_content = on_content;
         let mut on_tool_calls = on_tool_calls;
@@ -487,30 +575,34 @@ impl LlmClient for OpenAICodexClient {
         let mut on_content_block_complete = on_content_block_complete;
         let mut on_usage = on_usage;
 
-        let headers = self.build_headers().await?;
+        let mut excluded_slots = HashSet::new();
+        let mut prepared_headers = self.build_headers_for_request(&excluded_slots).await?;
+        let mut attempt = 0_u32;
 
-        for attempt in 1..=max_attempts {
+        loop {
+            attempt = attempt.saturating_add(1);
             debug!(
                 attempt = attempt,
-                max_attempts = max_attempts,
+                retries_remaining = retries_remaining,
                 "Sending OpenAI Codex request"
             );
 
             let response = match self
                 .http_client
                 .post(self.build_endpoint_url())
-                .headers(headers.clone())
+                .headers(prepared_headers.headers.clone())
                 .json(&request_body)
                 .send()
                 .await
             {
                 Ok(response) => response,
                 Err(error) => {
-                    if attempt < max_attempts && Self::should_retry_reqwest_error(&error) {
+                    if retries_remaining > 0 && Self::should_retry_reqwest_error(&error) {
+                        retries_remaining = retries_remaining.saturating_sub(1);
                         let wait = Self::compute_retry_delay(&retry_config, attempt, None);
                         warn!(
                             attempt = attempt,
-                            max_attempts = max_attempts,
+                            retries_remaining = retries_remaining,
                             wait_secs = wait.as_secs_f64(),
                             error = %error,
                             "OpenAI Codex request failed, retrying after backoff"
@@ -535,12 +627,45 @@ impl LlmClient for OpenAICodexClient {
                     "OpenAI Codex error response"
                 );
 
-                if attempt < max_attempts && Self::should_retry_status(status) {
-                    let retry_after = Self::retry_after_from_headers(&response_headers);
+                let retry_after = Self::retry_after_from_headers(&response_headers);
+                if is_usage_exhaustion_error(status, &body) {
+                    if let Some(slot) = prepared_headers
+                        .credential_slot
+                        .filter(|_| self.credential_pool.len() > 1)
+                    {
+                        let cooldown = retry_after.unwrap_or(DEFAULT_USAGE_LIMIT_COOLDOWN);
+                        self.credential_pool.mark_unavailable(slot, cooldown);
+                        excluded_slots.insert(slot);
+                        self.release_credential_slot(slot).await;
+
+                        match self.build_headers_for_request(&excluded_slots).await {
+                            Ok(replacement) => {
+                                info!(
+                                    exhausted_credential_slot = slot + 1,
+                                    replacement_credential_slot =
+                                        replacement.credential_slot.map(|index| index + 1),
+                                    "Failing over OpenAI Codex request to another credential slot"
+                                );
+                                prepared_headers = replacement;
+                                continue;
+                            }
+                            Err(failover_error) => {
+                                let friendly = parse_error_response(status, &body);
+                                self.record_failed_exchange(Some(status), &request_payload, body);
+                                return Err(failover_error).context(format!(
+                                    "{friendly}. No alternate OpenAI Codex credential is available"
+                                ));
+                            }
+                        }
+                    }
+                }
+
+                if retries_remaining > 0 && Self::should_retry_status(status) {
+                    retries_remaining = retries_remaining.saturating_sub(1);
                     let wait = Self::compute_retry_delay(&retry_config, attempt, retry_after);
                     info!(
                         attempt = attempt,
-                        max_attempts = max_attempts,
+                        retries_remaining = retries_remaining,
                         wait_secs = wait.as_secs_f64(),
                         status = %status,
                         "Retrying OpenAI Codex request after API error"
@@ -569,11 +694,12 @@ impl LlmClient for OpenAICodexClient {
             match processing_result {
                 Ok(()) => return Ok(()),
                 Err(error) => {
-                    if attempt < max_attempts {
+                    if retries_remaining > 0 {
+                        retries_remaining = retries_remaining.saturating_sub(1);
                         let wait = Self::compute_retry_delay(&retry_config, attempt, None);
                         warn!(
                             attempt = attempt,
-                            max_attempts = max_attempts,
+                            retries_remaining = retries_remaining,
                             wait_secs = wait.as_secs_f64(),
                             error = %error,
                             "OpenAI Codex streaming failed, retrying"
@@ -587,8 +713,6 @@ impl LlmClient for OpenAICodexClient {
                 }
             }
         }
-
-        Err(anyhow!("OpenAI Codex request exceeded retry budget"))
     }
 
     fn provider_name(&self) -> &str {
@@ -1053,6 +1177,22 @@ fn parse_error_response(status: StatusCode, body: &str) -> String {
     message
 }
 
+fn is_usage_exhaustion_error(status: StatusCode, body: &str) -> bool {
+    let Ok(parsed) = serde_json::from_str::<Value>(body) else {
+        return false;
+    };
+    let Some(error) = parsed.get("error") else {
+        return false;
+    };
+    let code = error
+        .get("code")
+        .and_then(Value::as_str)
+        .or_else(|| error.get("type").and_then(Value::as_str));
+
+    matches!(code, Some("usage_limit_reached" | "usage_not_included"))
+        && (status == StatusCode::TOO_MANY_REQUESTS || status.is_client_error())
+}
+
 fn prepare_codex_messages(messages: &[UnifiedMessage]) -> Vec<UnifiedMessage> {
     messages
         .iter()
@@ -1142,6 +1282,7 @@ mod tests {
     use super::*;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine as _;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[test]
     fn test_build_endpoint_url() {
@@ -1161,6 +1302,104 @@ mod tests {
         format!("{header}.{payload}.sig")
     }
 
+    fn store_mock_credentials(path: &std::path::Path, account_id: &str) {
+        crate::llm::openai_codex::OpenAICodexAuthStorage::new(path)
+            .store_credentials(&crate::llm::openai_codex::OpenAICodexCredentials {
+                access: mock_token(account_id),
+                refresh: format!("refresh_{account_id}"),
+                expires: u64::MAX,
+                account_id: account_id.to_string(),
+            })
+            .unwrap();
+    }
+
+    fn account_header(headers: &HeaderMap) -> &str {
+        headers
+            .get("chatgpt-account-id")
+            .and_then(|value| value.to_str().ok())
+            .unwrap()
+    }
+
+    async fn read_http_request(stream: &mut tokio::net::TcpStream) -> String {
+        let mut bytes = Vec::new();
+        let mut buffer = [0_u8; 4096];
+        loop {
+            let count = stream.read(&mut buffer).await.unwrap();
+            if count == 0 {
+                break;
+            }
+            bytes.extend_from_slice(&buffer[..count]);
+            let Some(header_end) = bytes.windows(4).position(|window| window == b"\r\n\r\n") else {
+                continue;
+            };
+            let headers = String::from_utf8_lossy(&bytes[..header_end]);
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())
+                        .flatten()
+                })
+                .unwrap_or(0);
+            if bytes.len() >= header_end + 4 + content_length {
+                break;
+            }
+        }
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+
+    async fn spawn_usage_failover_server() -> (String, tokio::task::JoinHandle<Vec<String>>) {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            let mut accounts = Vec::new();
+            for response_number in 0..2 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let request = read_http_request(&mut stream).await;
+                let account = request
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("chatgpt-account-id")
+                            .then(|| value.trim().to_string())
+                    })
+                    .unwrap();
+                accounts.push(account);
+
+                let (status, content_type, body) = if response_number == 0 {
+                    (
+                        "429 Too Many Requests",
+                        "application/json",
+                        r#"{"error":{"code":"usage_limit_reached","message":"quota exhausted"}}"#
+                            .to_string(),
+                    )
+                } else {
+                    (
+                        "200 OK",
+                        "text/event-stream",
+                        concat!(
+                            "data: {\"type\":\"response.completed\",\"response\":{",
+                            "\"id\":\"resp_ok\",\"usage\":{\"input_tokens\":1,",
+                            "\"output_tokens\":1}}}\n\n"
+                        )
+                        .to_string(),
+                    )
+                };
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+                stream.shutdown().await.unwrap();
+            }
+            accounts
+        });
+        (format!("http://{address}"), handle)
+    }
+
     #[tokio::test]
     async fn test_build_headers_uses_codex_specific_fields() {
         let client = OpenAICodexClient::new(OpenAICodexConfig {
@@ -1177,6 +1416,99 @@ mod tests {
         );
         assert_eq!(headers.get("originator").unwrap(), "pi");
         assert!(headers.contains_key("session_id"));
+    }
+
+    #[tokio::test]
+    async fn test_clients_round_robin_but_clones_remain_sticky() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let first = temp_dir.path().join("first.json");
+        let second = temp_dir.path().join("second.json");
+        store_mock_credentials(&first, "acc_first");
+        store_mock_credentials(&second, "acc_second");
+        let paths = vec![first, second];
+
+        let first_client =
+            OpenAICodexClient::new_with_auth_files(OpenAICodexConfig::default(), paths.clone())
+                .unwrap();
+        let first_headers = first_client.build_headers().await.unwrap();
+        let cloned_headers = first_client.clone().build_headers().await.unwrap();
+        assert_eq!(account_header(&first_headers), "acc_first");
+        assert_eq!(account_header(&cloned_headers), "acc_first");
+        drop(first_client);
+
+        let second_client =
+            OpenAICodexClient::new_with_auth_files(OpenAICodexConfig::default(), paths).unwrap();
+        let second_headers = second_client.build_headers().await.unwrap();
+        assert_eq!(account_header(&second_headers), "acc_second");
+    }
+
+    #[tokio::test]
+    async fn test_usage_exhaustion_fails_over_to_next_credential() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let first = temp_dir.path().join("first.json");
+        let second = temp_dir.path().join("second.json");
+        store_mock_credentials(&first, "acc_first");
+        store_mock_credentials(&second, "acc_second");
+        let (base_url, observed_accounts) = spawn_usage_failover_server().await;
+        let auth_files = vec![first, second];
+        let client = OpenAICodexClient::new_with_auth_files(
+            OpenAICodexConfig {
+                base_url,
+                retry: Some(RetryConfig {
+                    max_retries: 0,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            auth_files.clone(),
+        )
+        .unwrap();
+
+        client
+            .chat_with_tools_streaming(
+                &[UnifiedMessage::user("Inspect the repository")],
+                &[],
+                |_| Ok(()),
+                |_| Ok(()),
+                |_| Ok(()),
+                |_| Ok(()),
+                |_| Ok(()),
+                |_| Ok(()),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            observed_accounts.await.unwrap(),
+            vec!["acc_first".to_string(), "acc_second".to_string()]
+        );
+
+        drop(client);
+        let next_client =
+            OpenAICodexClient::new_with_auth_files(OpenAICodexConfig::default(), auth_files)
+                .unwrap();
+        let next_headers = next_client.build_headers().await.unwrap();
+        assert_eq!(account_header(&next_headers), "acc_second");
+    }
+
+    #[test]
+    fn test_only_subscription_exhaustion_codes_trigger_failover() {
+        assert!(is_usage_exhaustion_error(
+            StatusCode::TOO_MANY_REQUESTS,
+            r#"{"error":{"code":"usage_limit_reached"}}"#
+        ));
+        assert!(is_usage_exhaustion_error(
+            StatusCode::FORBIDDEN,
+            r#"{"error":{"type":"usage_not_included"}}"#
+        ));
+        assert!(!is_usage_exhaustion_error(
+            StatusCode::TOO_MANY_REQUESTS,
+            r#"{"error":{"code":"rate_limit_exceeded"}}"#
+        ));
+        assert!(!is_usage_exhaustion_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            r#"{"error":{"code":"usage_limit_reached"}}"#
+        ));
     }
 
     #[test]

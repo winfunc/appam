@@ -13,6 +13,7 @@ interactive ChatGPT login fallback when no cached Codex credential is available.
 ```bash
 export OPENAI_CODEX_MODEL="gpt-5.5"                    # optional
 export OPENAI_CODEX_ACCESS_TOKEN="eyJ..."              # optional explicit token
+export OPENAI_CODEX_AUTH_FILES="$HOME/.appam/one.json:$HOME/.appam/two.json" # optional pool
 export OPENAI_CODEX_AUTH_FILE="$HOME/.appam/auth.json" # optional auth cache override
 
 cargo run --example coding-agent-openai-codex
@@ -29,11 +30,11 @@ cargo run --example coding-agent-openai-codex
 ## Authentication behavior
 
 - If `OPENAI_CODEX_ACCESS_TOKEN` is set, the example uses it directly.
-- Otherwise it reads the auth cache from `OPENAI_CODEX_AUTH_FILE` (default:
-  `~/.appam/auth.json`).
+- Otherwise it reads the auth-file pool from `OPENAI_CODEX_AUTH_FILES`, or the
+  single cache in `OPENAI_CODEX_AUTH_FILE` (default: `~/.appam/auth.json`).
 - If neither source is usable, the example opens the ChatGPT OAuth browser flow
-  and stores the resulting credential in the auth cache before starting the
-  agent loop.
+  and stores the resulting credential in the first configured auth file before
+  starting the agent loop.
 
 ## Key builder setup
 
@@ -47,7 +48,6 @@ let agent = AgentBuilder::new("openai-codex-coding-assistant")
          Help users analyze code, refactor projects, debug issues, and manage files. \
          Always think through problems step-by-step and use tools when appropriate.",
     )
-    .openai_codex_access_token(access_token)
     .openai_reasoning(appam::llm::openai::ReasoningConfig {
         effort: Some(appam::llm::openai::ReasoningEffort::High),
         summary: Some(appam::llm::openai::ReasoningSummary::Detailed),

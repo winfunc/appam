@@ -11,12 +11,13 @@
 //!   export OPENAI_CODEX_MODEL="gpt-5.5"                # optional
 //!   export OPENAI_CODEX_ACCESS_TOKEN="eyJ..."          # optional explicit token
 //!   export OPENAI_CODEX_AUTH_FILE="$HOME/.appam/auth.json"  # optional auth cache override
+//!   export OPENAI_CODEX_AUTH_FILES="$HOME/.appam/one.json:$HOME/.appam/two.json" # optional pool
 //!   cargo run --example coding-agent-openai-codex
 
 use anyhow::{Context, Result};
 use appam::llm::openai_codex::{
-    login_openai_codex_interactive, resolve_openai_codex_auth, OpenAICodexAuthSource,
-    OpenAICodexAuthStorage,
+    configured_openai_codex_auth_files, login_openai_codex_interactive,
+    resolve_openai_codex_auth_from_files, OpenAICodexAuthSource, OpenAICodexAuthStorage,
 };
 use appam::prelude::*;
 use rustyline::DefaultEditor;
@@ -209,31 +210,34 @@ fn list_files(input: ListFilesInput) -> Result<ListFilesOutput> {
 // Auth helpers
 // ============================================================================
 
-async fn resolve_or_login_codex_access_token() -> Result<(String, String)> {
+async fn ensure_codex_authentication() -> Result<String> {
     let auth_file = std::env::var("OPENAI_CODEX_AUTH_FILE")
         .ok()
         .filter(|value| !value.trim().is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| appam::llm::openai_codex::OpenAICodexConfig::default().auth_file);
+    let auth_files = configured_openai_codex_auth_files(&auth_file)?;
 
-    match resolve_openai_codex_auth(None, &auth_file).await {
+    match resolve_openai_codex_auth_from_files(None, &auth_files).await {
         Ok(resolved) => {
             let source = match resolved.source {
                 OpenAICodexAuthSource::ConfiguredToken => "OPENAI_CODEX_ACCESS_TOKEN".to_string(),
-                OpenAICodexAuthSource::CachedOAuth => {
-                    format!("OAuth cache ({})", auth_file.display())
+                OpenAICodexAuthSource::CachedOAuth if auth_files.len() > 1 => {
+                    format!("OAuth credential pool ({} slots)", auth_files.len())
                 }
+                OpenAICodexAuthSource::CachedOAuth => "OAuth cache".to_string(),
             };
-            Ok((resolved.access_token, source))
+            Ok(source)
         }
         Err(error) => {
             eprintln!("No usable OpenAI Codex credentials found: {}", error);
-            let storage = OpenAICodexAuthStorage::new(auth_file.clone());
-            let credentials = login_openai_codex_interactive(&storage, "pi").await?;
-            Ok((
-                credentials.access,
-                format!("interactive login ({})", auth_file.display()),
-            ))
+            let login_file = auth_files
+                .first()
+                .cloned()
+                .context("OpenAI Codex auth-file pool is empty")?;
+            let storage = OpenAICodexAuthStorage::new(login_file);
+            login_openai_codex_interactive(&storage, "pi").await?;
+            Ok("interactive login".to_string())
         }
     }
 }
@@ -245,7 +249,7 @@ async fn resolve_or_login_codex_access_token() -> Result<(String, String)> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let model = std::env::var("OPENAI_CODEX_MODEL").unwrap_or_else(|_| "gpt-5.5".to_string());
-    let (access_token, auth_source) = resolve_or_login_codex_access_token().await?;
+    let auth_source = ensure_codex_authentication().await?;
 
     println!("🚀 Coding Agent - GPT via OpenAI Codex Subscription\n");
     println!("   Model: {}", model);
@@ -260,7 +264,6 @@ async fn main() -> Result<()> {
              Help users analyze code, refactor projects, debug issues, and manage files. \
              Always think through problems step-by-step and use tools when appropriate.",
         )
-        .openai_codex_access_token(access_token)
         .openai_reasoning(appam::llm::openai::ReasoningConfig {
             effort: Some(appam::llm::openai::ReasoningEffort::High),
             summary: Some(appam::llm::openai::ReasoningSummary::Detailed),

@@ -508,7 +508,12 @@ Auth precedence is:
 
 1. `OpenAICodexConfig.access_token`
 2. `OPENAI_CODEX_ACCESS_TOKEN`
-3. cached OAuth credentials in `OPENAI_CODEX_AUTH_FILE` or the default auth file
+3. sticky round-robin OAuth credentials in `OPENAI_CODEX_AUTH_FILES`
+4. cached OAuth credentials in `OPENAI_CODEX_AUTH_FILE` or the default auth file
+
+`OPENAI_CODEX_AUTH_FILES` is a platform-separated path list. Each file keeps
+the existing single-account schema and refresh lock. Explicit tokens remain
+authoritative and disable pool rotation.
 
 Use the interactive login helpers only for trusted local developer flows. The example is `examples/coding-agent-openai-codex.rs`.
 
