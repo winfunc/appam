@@ -4,7 +4,7 @@
 //! API keys. Appam therefore stores refreshable ChatGPT credentials in a local
 //! file cache and refreshes them under a file lock before expiry. When
 //! `OPENAI_CODEX_AUTH_FILES` lists multiple caches, runtime clients share a
-//! sticky round-robin pool and fail over only after confirmed usage exhaustion.
+//! sticky round-robin pool and fail over after usage exhaustion or rejected auth.
 //! Lock contention yields to the async runtime and has a deadline, so an OAuth
 //! refresh cannot block every runtime worker and prevent its own completion.
 //!
@@ -287,9 +287,10 @@ pub(crate) struct OpenAICodexCredentialLease {
     pub(crate) auth: ResolvedOpenAICodexAuth,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 struct CredentialHealth {
     unavailable_until: Option<Instant>,
+    rejected_tokens: HashSet<[u8; 32]>,
 }
 
 /// Process-shared pool of independently refreshable Codex OAuth files.
@@ -356,6 +357,10 @@ impl OpenAICodexCredentialPool {
         for index in candidates {
             match self.storages[index].resolve_credentials().await {
                 Ok(Some(credentials)) => {
+                    if self.is_rejected(index, &credentials.access) {
+                        failed_slots.push(index + 1);
+                        continue;
+                    }
                     return Ok(OpenAICodexCredentialLease {
                         index,
                         auth: ResolvedOpenAICodexAuth {
@@ -384,7 +389,7 @@ impl OpenAICodexCredentialPool {
         }
 
         bail!(
-            "No usable OpenAI Codex credential was found in configured slot(s): {}",
+            "No usable OpenAI Codex credential was found in configured slot(s): {}. Reauthenticate rejected accounts with codex-login",
             failed_slots
                 .into_iter()
                 .map(|slot| slot.to_string())
@@ -405,6 +410,34 @@ impl OpenAICodexCredentialPool {
         if let Some(slot) = health.get_mut(index) {
             slot.unavailable_until = Some(unavailable_until);
         }
+    }
+
+    /// Quarantine the rejected token without retaining its plaintext.
+    ///
+    /// A replacement token from refresh or interactive login is immediately
+    /// eligible. Rejection is process-local and never modifies credential files.
+    pub(crate) fn reject_token(&self, index: usize, token: &str) {
+        let mut health = self
+            .health
+            .lock()
+            .expect("codex credential health mutex poisoned");
+        if let Some(slot) = health.get_mut(index) {
+            slot.rejected_tokens
+                .insert(Sha256::digest(token.as_bytes()).into());
+        }
+    }
+
+    /// Compare the currently loaded token against the provider-rejected token.
+    ///
+    /// Keep fingerprints across replacement so out-of-order failures from
+    /// in-flight requests cannot make an already rejected token eligible again.
+    fn is_rejected(&self, index: usize, token: &str) -> bool {
+        let fingerprint: [u8; 32] = Sha256::digest(token.as_bytes()).into();
+        self.health
+            .lock()
+            .expect("codex credential health mutex poisoned")
+            .get(index)
+            .is_some_and(|slot| slot.rejected_tokens.contains(&fingerprint))
     }
 
     fn is_available(&self, index: usize) -> bool {
@@ -1417,6 +1450,34 @@ mod tests {
                 PathBuf::from("account-a.json"),
                 PathBuf::from("account-b.json")
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_rejected_tokens_survive_out_of_order_failures_and_allow_relogin() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("account.json");
+        store_mock_credentials(&path, "old");
+        let pool = OpenAICodexCredentialPool::new(vec![path.clone()]);
+        let old = pool.resolve(None, &HashSet::new()).await.unwrap();
+        pool.reject_token(0, &old.auth.access_token);
+        assert!(pool.resolve(None, &HashSet::new()).await.is_err());
+
+        store_mock_credentials(&path, "replacement");
+        let replacement = pool.resolve(None, &HashSet::new()).await.unwrap();
+        pool.reject_token(0, &replacement.auth.access_token);
+        // A late failure for the original token must not clear the newer rejection.
+        pool.reject_token(0, &old.auth.access_token);
+        assert!(pool.resolve(None, &HashSet::new()).await.is_err());
+
+        store_mock_credentials(&path, "fresh");
+        assert_eq!(
+            pool.resolve(None, &HashSet::new())
+                .await
+                .unwrap()
+                .auth
+                .account_id,
+            "fresh"
         );
     }
 

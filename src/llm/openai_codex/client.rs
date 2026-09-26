@@ -6,6 +6,7 @@
 //! slightly different streaming event semantics.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -57,6 +58,18 @@ struct PreparedCodexHeaders {
 
 const DEFAULT_USAGE_LIMIT_COOLDOWN: Duration = Duration::from_secs(60 * 60);
 
+/// Typed, sanitized authentication failure preserved across SSE parsing.
+#[derive(Debug)]
+struct CodexAuthenticationError;
+
+impl std::fmt::Display for CodexAuthenticationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("OpenAI Codex authentication rejected; reauthenticate the affected account with codex-login")
+    }
+}
+
+impl std::error::Error for CodexAuthenticationError {}
+
 impl OpenAICodexClient {
     /// Create a new OpenAI Codex client.
     ///
@@ -78,7 +91,7 @@ impl OpenAICodexClient {
     /// New clients sharing the same ordered file list use a process-wide pool.
     /// Their first request is distributed round-robin, while later requests
     /// remain sticky to the selected credential until the provider reports
-    /// that account's subscription usage is exhausted.
+    /// that account's subscription usage is exhausted or authentication fails.
     ///
     /// Explicit access tokens configured on `config` or through
     /// `OPENAI_CODEX_ACCESS_TOKEN` remain authoritative and bypass the pool.
@@ -181,6 +194,49 @@ impl OpenAICodexClient {
     fn build_endpoint_url(&self) -> String {
         let trimmed = self.config.base_url.trim_end_matches('/');
         format!("{trimmed}/codex/responses")
+    }
+
+    /// Quarantine failed pooled auth and select a different credential once.
+    ///
+    /// Explicit tokens remain authoritative. Never replay after any callback
+    /// output, since consumers may already have acted on streamed tool calls.
+    /// The request-local exclusion set bounds failover to one try per slot.
+    async fn recover_authentication(
+        &self,
+        prepared: &PreparedCodexHeaders,
+        excluded: &mut HashSet<usize>,
+        emitted_output: bool,
+    ) -> Result<PreparedCodexHeaders> {
+        let Some(slot) = prepared.credential_slot else {
+            return Err(CodexAuthenticationError.into());
+        };
+        if let Some(token) = prepared
+            .headers
+            .get(AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.strip_prefix("Bearer "))
+        {
+            self.credential_pool.reject_token(slot, token);
+        }
+        excluded.insert(slot);
+        self.release_credential_slot(slot).await;
+        warn!(
+            credential_slot = slot + 1,
+            failure_category = "authentication",
+            "Quarantined rejected OpenAI Codex credential"
+        );
+        if emitted_output {
+            return Err(anyhow!("OpenAI Codex authentication failed after streaming output; automatic replay stopped"));
+        }
+        let replacement = self.build_headers_for_request(excluded).await.context(
+            "OpenAI Codex authentication unavailable: no alternate credential is usable",
+        )?;
+        info!(
+            rejected_credential_slot = slot + 1,
+            replacement_credential_slot = replacement.credential_slot.map(|index| index + 1),
+            "Failing over OpenAI Codex request after authentication rejection"
+        );
+        Ok(replacement)
     }
 
     async fn build_headers_for_request(
@@ -574,6 +630,7 @@ impl LlmClient for OpenAICodexClient {
         let mut on_tool_calls_partial = on_tool_calls_partial;
         let mut on_content_block_complete = on_content_block_complete;
         let mut on_usage = on_usage;
+        let emitted_output = AtomicBool::new(false);
 
         let mut excluded_slots = HashSet::new();
         let mut prepared_headers = self.build_headers_for_request(&excluded_slots).await?;
@@ -620,6 +677,28 @@ impl LlmClient for OpenAICodexClient {
                 let status = response.status();
                 let response_headers = response.headers().clone();
                 let body = response.text().await.unwrap_or_default();
+                if status == StatusCode::UNAUTHORIZED
+                    || serde_json::from_str::<Value>(&body)
+                        .ok()
+                        .is_some_and(|value| {
+                            is_authentication_error(value.get("error").unwrap_or(&value))
+                        })
+                {
+                    self.record_failed_exchange(
+                        Some(status),
+                        &request_payload,
+                        CodexAuthenticationError.to_string(),
+                    );
+                    prepared_headers = self
+                        .recover_authentication(
+                            &prepared_headers,
+                            &mut excluded_slots,
+                            emitted_output.load(Ordering::Relaxed),
+                        )
+                        .await?;
+                    self.clear_last_failed_exchange();
+                    continue;
+                }
                 error!(
                     status = %status,
                     attempt = attempt,
@@ -682,18 +761,52 @@ impl LlmClient for OpenAICodexClient {
             let processing_result = self
                 .process_stream(
                     response,
-                    &mut on_content,
-                    &mut on_tool_calls,
-                    &mut on_reasoning,
-                    &mut on_tool_calls_partial,
-                    &mut on_content_block_complete,
-                    &mut on_usage,
+                    &mut |value| {
+                        emitted_output.store(true, Ordering::Relaxed);
+                        on_content(value)
+                    },
+                    &mut |value| {
+                        emitted_output.store(true, Ordering::Relaxed);
+                        on_tool_calls(value)
+                    },
+                    &mut |value| {
+                        emitted_output.store(true, Ordering::Relaxed);
+                        on_reasoning(value)
+                    },
+                    &mut |value| {
+                        emitted_output.store(true, Ordering::Relaxed);
+                        on_tool_calls_partial(value)
+                    },
+                    &mut |value| {
+                        emitted_output.store(true, Ordering::Relaxed);
+                        on_content_block_complete(value)
+                    },
+                    &mut |value| {
+                        emitted_output.store(true, Ordering::Relaxed);
+                        on_usage(value)
+                    },
                 )
                 .await;
 
             match processing_result {
                 Ok(()) => return Ok(()),
                 Err(error) => {
+                    if error.downcast_ref::<CodexAuthenticationError>().is_some() {
+                        self.record_failed_exchange(
+                            None,
+                            &request_payload,
+                            CodexAuthenticationError.to_string(),
+                        );
+                        prepared_headers = self
+                            .recover_authentication(
+                                &prepared_headers,
+                                &mut excluded_slots,
+                                emitted_output.load(Ordering::Relaxed),
+                            )
+                            .await?;
+                        self.clear_last_failed_exchange();
+                        continue;
+                    }
                     if retries_remaining > 0 {
                         retries_remaining = retries_remaining.saturating_sub(1);
                         let wait = Self::compute_retry_delay(&retry_config, attempt, None);
@@ -817,6 +930,9 @@ where
 
     match event_type {
         "error" | "response.error" => {
+            if is_authentication_error(payload.get("error").unwrap_or(payload)) {
+                return Err(CodexAuthenticationError.into());
+            }
             let message = payload
                 .get("error")
                 .and_then(|error| error.get("message"))
@@ -826,6 +942,12 @@ where
             bail!("{message}");
         }
         "response.failed" => {
+            if payload
+                .pointer("/response/error")
+                .is_some_and(is_authentication_error)
+            {
+                return Err(CodexAuthenticationError.into());
+            }
             let message = payload
                 .get("response")
                 .and_then(|response| response.get("error"))
@@ -1177,6 +1299,31 @@ fn parse_error_response(status: StatusCode, body: &str) -> String {
     message
 }
 
+/// Recognize explicit token errors, including the provider's message-only
+/// revocation event. Generic permission and model-access failures do not rotate
+/// identities, and arbitrary error text is never retained in this error type.
+fn is_authentication_error(error: &Value) -> bool {
+    ["code", "type"].iter().any(|key| {
+        matches!(
+            error.get(key).and_then(Value::as_str),
+            Some(
+                "invalid_token"
+                    | "token_expired"
+                    | "token_invalidated"
+                    | "invalidated_token"
+                    | "invalid_authentication_token"
+            )
+        )
+    }) || error
+        .get("message")
+        .and_then(Value::as_str)
+        .is_some_and(|message| {
+            message
+                .to_ascii_lowercase()
+                .contains("encountered invalidated oauth token for user")
+        })
+}
+
 fn is_usage_exhaustion_error(status: StatusCode, body: &str) -> bool {
     let Ok(parsed) = serde_json::from_str::<Value>(body) else {
         return false;
@@ -1349,14 +1496,16 @@ mod tests {
         String::from_utf8_lossy(&bytes).into_owned()
     }
 
-    async fn spawn_usage_failover_server() -> (String, tokio::task::JoinHandle<Vec<String>>) {
+    async fn spawn_response_server(
+        responses: Vec<(&'static str, &'static str, String)>,
+    ) -> (String, tokio::task::JoinHandle<Vec<String>>) {
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
             .await
             .unwrap();
         let address = listener.local_addr().unwrap();
         let handle = tokio::spawn(async move {
             let mut accounts = Vec::new();
-            for response_number in 0..2 {
+            for (status, content_type, body) in responses {
                 let (mut stream, _) = listener.accept().await.unwrap();
                 let request = read_http_request(&mut stream).await;
                 let account = request
@@ -1369,25 +1518,6 @@ mod tests {
                     .unwrap();
                 accounts.push(account);
 
-                let (status, content_type, body) = if response_number == 0 {
-                    (
-                        "429 Too Many Requests",
-                        "application/json",
-                        r#"{"error":{"code":"usage_limit_reached","message":"quota exhausted"}}"#
-                            .to_string(),
-                    )
-                } else {
-                    (
-                        "200 OK",
-                        "text/event-stream",
-                        concat!(
-                            "data: {\"type\":\"response.completed\",\"response\":{",
-                            "\"id\":\"resp_ok\",\"usage\":{\"input_tokens\":1,",
-                            "\"output_tokens\":1}}}\n\n"
-                        )
-                        .to_string(),
-                    )
-                };
                 let response = format!(
                     "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                     body.len()
@@ -1398,6 +1528,188 @@ mod tests {
             accounts
         });
         (format!("http://{address}"), handle)
+    }
+
+    fn success_response() -> (&'static str, &'static str, String) {
+        ("200 OK", "text/event-stream", "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_ok\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n".into())
+    }
+
+    async fn run_mock_request(client: &OpenAICodexClient) -> Result<()> {
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            client.chat_with_tools_streaming(
+                &[UnifiedMessage::user("hello")],
+                &[],
+                |_| Ok(()),
+                |_| Ok(()),
+                |_| Ok(()),
+                |_| Ok(()),
+                |_| Ok(()),
+                |_| Ok(()),
+            ),
+        )
+        .await
+        .expect("request must terminate promptly")
+    }
+
+    #[tokio::test]
+    async fn test_authentication_failover_http_and_stream_events() {
+        let errors = vec![
+            ("401 Unauthorized", "application/json", r#"{"error":{"message":"unauthorized"}}"#.to_string()),
+            ("403 Forbidden", "application/json", r#"{"error":{"code":"token_invalidated"}}"#.to_string()),
+            ("200 OK", "text/event-stream", "data: {\"type\":\"error\",\"message\":\"Encountered invalidated oauth token for user, failing request\"}\n\n".into()),
+            ("200 OK", "text/event-stream", "data: {\"type\":\"response.error\",\"error\":{\"code\":\"invalid_token\"}}\n\n".into()),
+            ("200 OK", "text/event-stream", "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"token_expired\"}}}\n\n".into()),
+        ];
+        for error in errors {
+            let dir = tempfile::tempdir().unwrap();
+            let paths = vec![
+                dir.path().join("first.json"),
+                dir.path().join("second.json"),
+            ];
+            store_mock_credentials(&paths[0], "first");
+            store_mock_credentials(&paths[1], "second");
+            let (base_url, observed) = spawn_response_server(vec![error, success_response()]).await;
+            let client = OpenAICodexClient::new_with_auth_files(
+                OpenAICodexConfig {
+                    base_url,
+                    retry: Some(RetryConfig {
+                        max_retries: 0,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                paths.clone(),
+            )
+            .unwrap();
+            run_mock_request(&client).await.unwrap();
+            assert_eq!(observed.await.unwrap(), vec!["first", "second"]);
+            assert!(client.take_last_failed_exchange().is_none());
+            let next =
+                OpenAICodexClient::new_with_auth_files(OpenAICodexConfig::default(), paths.clone())
+                    .unwrap();
+            assert_eq!(
+                account_header(&next.build_headers().await.unwrap()),
+                "second"
+            );
+            // Re-login re-enables a replaced token without restarting the process.
+            store_mock_credentials(&paths[0], "first_reauthenticated");
+            let recovered = client
+                .credential_pool
+                .resolve(Some(0), &HashSet::new())
+                .await
+                .unwrap();
+            assert_eq!(recovered.index, 0);
+            assert_eq!(recovered.auth.account_id, "first_reauthenticated");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_all_revoked_credentials_fail_once_and_stay_quarantined() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = vec![
+            dir.path().join("first.json"),
+            dir.path().join("second.json"),
+        ];
+        store_mock_credentials(&paths[0], "first");
+        store_mock_credentials(&paths[1], "second");
+        let rejected = ("401 Unauthorized", "application/json", "{}".to_string());
+        let (base_url, observed) = spawn_response_server(vec![rejected.clone(), rejected]).await;
+        let client = OpenAICodexClient::new_with_auth_files(
+            OpenAICodexConfig {
+                base_url,
+                ..Default::default()
+            },
+            paths.clone(),
+        )
+        .unwrap();
+        let error = run_mock_request(&client).await.unwrap_err();
+        assert!(error.to_string().contains("authentication unavailable"));
+        assert_eq!(observed.await.unwrap(), vec!["first", "second"]);
+        let next =
+            OpenAICodexClient::new_with_auth_files(OpenAICodexConfig::default(), paths).unwrap();
+        assert!(next
+            .build_headers()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("Reauthenticate"));
+    }
+
+    #[tokio::test]
+    async fn test_authentication_failure_does_not_replay_emitted_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = vec![
+            dir.path().join("first.json"),
+            dir.path().join("second.json"),
+        ];
+        store_mock_credentials(&paths[0], "first");
+        store_mock_credentials(&paths[1], "second");
+        let body = concat!(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n",
+            "data: {\"type\":\"error\",\"error\":{\"code\":\"invalid_token\"}}\n\n"
+        )
+        .to_string();
+        let (base_url, observed) =
+            spawn_response_server(vec![("200 OK", "text/event-stream", body)]).await;
+        let client = OpenAICodexClient::new_with_auth_files(
+            OpenAICodexConfig {
+                base_url,
+                ..Default::default()
+            },
+            paths,
+        )
+        .unwrap();
+        assert!(run_mock_request(&client)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("automatic replay stopped"));
+        assert_eq!(observed.await.unwrap(), vec!["first"]);
+        assert_eq!(
+            account_header(&client.build_headers().await.unwrap()),
+            "second"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_explicit_token_auth_failure_never_falls_back_to_pool() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("healthy.json");
+        store_mock_credentials(&path, "healthy");
+        let (base_url, observed) =
+            spawn_response_server(vec![("401 Unauthorized", "application/json", "{}".into())])
+                .await;
+        let client = OpenAICodexClient::new_with_auth_files(
+            OpenAICodexConfig {
+                base_url,
+                access_token: Some(mock_token("explicit")),
+                ..Default::default()
+            },
+            vec![path],
+        )
+        .unwrap();
+        assert!(run_mock_request(&client)
+            .await
+            .unwrap_err()
+            .downcast_ref::<CodexAuthenticationError>()
+            .is_some());
+        assert_eq!(observed.await.unwrap(), vec!["explicit"]);
+    }
+
+    #[test]
+    fn test_authentication_classifier_does_not_rotate_permission_or_quota_errors() {
+        for code in [
+            "permission_denied",
+            "model_not_found",
+            "rate_limit_exceeded",
+            "usage_limit_reached",
+        ] {
+            assert!(!is_authentication_error(&serde_json::json!({"code": code})));
+        }
+        assert!(!is_authentication_error(
+            &serde_json::json!({"message": "invalid request"})
+        ));
     }
 
     #[tokio::test]
@@ -1449,7 +1761,15 @@ mod tests {
         let second = temp_dir.path().join("second.json");
         store_mock_credentials(&first, "acc_first");
         store_mock_credentials(&second, "acc_second");
-        let (base_url, observed_accounts) = spawn_usage_failover_server().await;
+        let (base_url, observed_accounts) = spawn_response_server(vec![
+            (
+                "429 Too Many Requests",
+                "application/json",
+                r#"{"error":{"code":"usage_limit_reached","message":"quota exhausted"}}"#.into(),
+            ),
+            success_response(),
+        ])
+        .await;
         let auth_files = vec![first, second];
         let client = OpenAICodexClient::new_with_auth_files(
             OpenAICodexConfig {

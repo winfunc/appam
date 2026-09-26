@@ -105,6 +105,12 @@ Common model override variables:
 - `AZURE_ANTHROPIC_MODEL`
 - `AWS_BEDROCK_MODEL_ID`
 
+Codex credential pools fail over on subscription exhaustion and confirmed token
+rejection, including streamed OAuth revocation errors. Rejected tokens stay
+quarantined in memory until replaced through refresh or login. Explicit token
+overrides remain authoritative. Authentication failover is bounded by the pool
+size and stops if streaming output has already reached consumers.
+
 ## Quickstart
 
 The smallest useful Appam program is a Rust agent with streaming output:
