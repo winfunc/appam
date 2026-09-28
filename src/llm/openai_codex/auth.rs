@@ -5,6 +5,8 @@
 //! file cache and refreshes them under a file lock before expiry. When
 //! `OPENAI_CODEX_AUTH_FILES` lists multiple caches, runtime clients share a
 //! sticky round-robin pool and fail over only after confirmed usage exhaustion.
+//! Lock contention yields to the async runtime and has a deadline, so an OAuth
+//! refresh cannot block every runtime worker and prevent its own completion.
 //!
 //! # Security model
 //!
@@ -19,7 +21,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -33,7 +35,7 @@ use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use tokio::time::timeout;
+use tokio::time::{sleep, timeout};
 use tracing::{debug, info, warn};
 
 /// OAuth client ID used for ChatGPT Codex browser login.
@@ -58,6 +60,12 @@ pub const OPENAI_CODEX_AUTH_FILES_ENV: &str = "OPENAI_CODEX_AUTH_FILES";
 const MAX_AUTH_FILES: usize = 16;
 /// Short suppression window for auth files that cannot currently be resolved.
 const AUTH_RESOLUTION_COOLDOWN: Duration = Duration::from_secs(60);
+/// Maximum wait for another process to finish updating an OAuth cache.
+const AUTH_LOCK_TIMEOUT: Duration = Duration::from_secs(40);
+/// Yield between nonblocking lock attempts without busy-waiting.
+const AUTH_LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(25);
+/// Bound the entire OAuth exchange, including reading the response body.
+const TOKEN_EXCHANGE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Fully resolved ChatGPT OAuth credentials for the Codex provider.
 ///
@@ -123,6 +131,8 @@ impl OpenAICodexAuthStorage {
     /// Returns whether the auth cache contains an OpenAI Codex entry.
     ///
     /// This is intentionally shallow and does not validate or refresh the token.
+    /// Returns an error immediately if another operation holds the cache lock;
+    /// synchronous callers must never block an async runtime worker on a refresh.
     pub fn has_cached_entry(&self) -> Result<bool> {
         let mut file = self.open_locked_file()?;
         let data = read_auth_file(&mut file)?;
@@ -130,6 +140,9 @@ impl OpenAICodexAuthStorage {
     }
 
     /// Load the raw cached credentials without refreshing them.
+    ///
+    /// Returns an error immediately on lock contention. Credentials are never
+    /// read without the exclusive lock, including during another process's write.
     pub fn load_credentials(&self) -> Result<Option<OpenAICodexCredentials>> {
         let mut file = self.open_locked_file()?;
         let data = read_auth_file(&mut file)?;
@@ -137,6 +150,9 @@ impl OpenAICodexAuthStorage {
     }
 
     /// Store or replace cached Codex credentials.
+    ///
+    /// Returns an error immediately on lock contention and leaves the existing
+    /// cache intact. Callers may retry after the concurrent operation completes.
     pub fn store_credentials(&self, credentials: &OpenAICodexCredentials) -> Result<()> {
         let mut file = self.open_locked_file()?;
         let mut data = read_auth_file(&mut file)?;
@@ -148,20 +164,25 @@ impl OpenAICodexAuthStorage {
     }
 
     /// Load cached credentials and refresh them if needed.
+    ///
+    /// Contended locks are retried asynchronously for at most 40 seconds. An
+    /// OAuth exchange has a separate 30-second deadline. Both failures release
+    /// the file and fail closed without using expired or partially written tokens.
     pub async fn resolve_credentials(&self) -> Result<Option<OpenAICodexCredentials>> {
-        self.resolve_credentials_with_refresh(refresh_openai_codex_token)
+        self.resolve_credentials_with_refresh(refresh_openai_codex_token, TOKEN_EXCHANGE_TIMEOUT)
             .await
     }
 
     async fn resolve_credentials_with_refresh<F, Fut>(
         &self,
         refresh_fn: F,
+        refresh_timeout: Duration,
     ) -> Result<Option<OpenAICodexCredentials>>
     where
         F: Fn(String) -> Fut,
         Fut: std::future::Future<Output = Result<OpenAICodexCredentials>>,
     {
-        let mut file = self.open_locked_file()?;
+        let mut file = self.open_locked_file_async(AUTH_LOCK_TIMEOUT).await?;
         let mut data = read_auth_file(&mut file)?;
         let Some(existing) = data
             .get(PROVIDER_KEY)
@@ -184,7 +205,9 @@ impl OpenAICodexAuthStorage {
             "Refreshing expired OpenAI Codex credentials"
         );
 
-        let refreshed = refresh_fn(existing.refresh.clone()).await?;
+        let refreshed = timeout(refresh_timeout, refresh_fn(existing.refresh.clone()))
+            .await
+            .context("OpenAI Codex credential refresh timed out")??;
         data.insert(
             PROVIDER_KEY.to_string(),
             StoredCredential::from(refreshed.clone()),
@@ -193,19 +216,65 @@ impl OpenAICodexAuthStorage {
         Ok(Some(refreshed))
     }
 
-    fn open_locked_file(&self) -> Result<File> {
+    /// Open a private cache file without acquiring its advisory lock.
+    ///
+    /// The returned file must be locked before reading or writing credentials.
+    /// Permissions are restricted at creation and also repaired for older files.
+    fn open_file(&self) -> Result<File> {
         ensure_parent_dir(&self.path)?;
 
         let mut options = OpenOptions::new();
         options.read(true).write(true).create(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
         let file = options
             .open(&self.path)
             .with_context(|| format!("Failed to open auth file {}", self.path.display()))?;
 
-        file.lock()
-            .with_context(|| format!("Failed to lock auth file {}", self.path.display()))?;
         ensure_file_permissions(&file)?;
         Ok(file)
+    }
+
+    /// Acquire the cache lock without blocking the calling thread.
+    ///
+    /// Synchronous cache inspection can run inside async provider construction.
+    /// Contention therefore fails immediately instead of starving that runtime.
+    fn open_locked_file(&self) -> Result<File> {
+        let file = self.open_file()?;
+        match file.try_lock() {
+            Ok(()) => Ok(file),
+            Err(TryLockError::WouldBlock) => {
+                bail!("OpenAI Codex auth cache is busy; retry the operation")
+            }
+            Err(TryLockError::Error(error)) => {
+                Err(error).context("Failed to lock OpenAI Codex auth cache")
+            }
+        }
+    }
+
+    /// Acquire an exclusive cache lock while allowing other async tasks to run.
+    ///
+    /// `wait` bounds contention across processes and independent file handles.
+    /// Cancellation or timeout drops the open file. Holding the acquired lock
+    /// across refresh preserves single-use refresh-token rotation semantics.
+    async fn open_locked_file_async(&self, wait: Duration) -> Result<File> {
+        let file = self.open_file()?;
+        timeout(wait, async {
+            loop {
+                match file.try_lock() {
+                    Ok(()) => return Ok(file),
+                    Err(TryLockError::WouldBlock) => sleep(AUTH_LOCK_RETRY_INTERVAL).await,
+                    Err(TryLockError::Error(error)) => {
+                        return Err(error).context("Failed to lock OpenAI Codex auth cache");
+                    }
+                }
+            }
+        })
+        .await
+        .context("Timed out waiting for OpenAI Codex auth cache lock")?
     }
 }
 
@@ -788,6 +857,7 @@ async fn exchange_token_form(
 
     let response = reqwest::Client::new()
         .post(TOKEN_URL)
+        .timeout(TOKEN_EXCHANGE_TIMEOUT)
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body(encoded_body)
         .send()
@@ -796,8 +866,7 @@ async fn exchange_token_form(
 
     if !response.status().is_success() {
         let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        bail!("OpenAI Codex token exchange failed ({}): {}", status, body);
+        bail!("OpenAI Codex token exchange failed ({})", status);
     }
 
     let payload: TokenResponse = response
@@ -1148,15 +1217,18 @@ mod tests {
             .unwrap();
 
         let refreshed = storage
-            .resolve_credentials_with_refresh(|refresh| async move {
-                assert_eq!(refresh, "refresh_old");
-                Ok(OpenAICodexCredentials {
-                    access: mock_token("acc_new"),
-                    refresh: "refresh_new".to_string(),
-                    expires: current_time_millis() + 60_000,
-                    account_id: "acc_new".to_string(),
-                })
-            })
+            .resolve_credentials_with_refresh(
+                |refresh| async move {
+                    assert_eq!(refresh, "refresh_old");
+                    Ok(OpenAICodexCredentials {
+                        access: mock_token("acc_new"),
+                        refresh: "refresh_new".to_string(),
+                        expires: current_time_millis() + 60_000,
+                        account_id: "acc_new".to_string(),
+                    })
+                },
+                TOKEN_EXCHANGE_TIMEOUT,
+            )
             .await
             .unwrap()
             .unwrap();
@@ -1165,6 +1237,125 @@ mod tests {
         let stored = storage.load_credentials().unwrap().unwrap();
         assert_eq!(stored.account_id, "acc_new");
         assert_eq!(stored.refresh, "refresh_new");
+    }
+
+    /// Bound regressions even if a blocking syscall starves the test runtime.
+    ///
+    /// The runtime uses one thread to reproduce production's starvation with
+    /// minimal contention; the separate receiver can still enforce its deadline.
+    fn run_with_runtime_deadline(test: impl std::future::Future<Output = ()> + Send + 'static) {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(test);
+            sender.send(()).unwrap();
+        });
+        receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("auth lock contention blocked the async runtime");
+        thread.join().unwrap();
+    }
+
+    #[test]
+    fn test_storage_contention_does_not_block_runtime() {
+        run_with_runtime_deadline(async {
+            let directory = tempdir().unwrap();
+            let path = directory.path().join("auth.json");
+            store_mock_credentials(&path, "acc_contended");
+            let storage = OpenAICodexAuthStorage::new(path);
+            let held_file = storage.open_locked_file().unwrap();
+            let existing = OpenAICodexCredentials {
+                access: mock_token("acc_replacement"),
+                refresh: "replacement".to_string(),
+                expires: u64::MAX,
+                account_id: "acc_replacement".to_string(),
+            };
+
+            assert!(storage.has_cached_entry().is_err());
+            assert!(storage.load_credentials().is_err());
+            assert!(storage.store_credentials(&existing).is_err());
+
+            let (resolved, ()) = tokio::join!(storage.resolve_credentials(), async move {
+                sleep(Duration::from_millis(50)).await;
+                drop(held_file);
+            });
+            assert_eq!(resolved.unwrap().unwrap().account_id, "acc_contended");
+        });
+    }
+
+    #[test]
+    fn test_storage_concurrent_refreshes_are_serialized() {
+        run_with_runtime_deadline(async {
+            let directory = tempdir().unwrap();
+            let storage = OpenAICodexAuthStorage::new(directory.path().join("auth.json"));
+            let mut credentials = OpenAICodexCredentials {
+                access: mock_token("acc_serialized"),
+                refresh: "refresh_old".to_string(),
+                expires: 0,
+                account_id: "acc_serialized".to_string(),
+            };
+            storage.store_credentials(&credentials).unwrap();
+            credentials.refresh = "refresh_rotated".to_string();
+            credentials.expires = u64::MAX;
+            let calls = AtomicUsize::new(0);
+            let requests = (0..8).map(|_| {
+                storage.resolve_credentials_with_refresh(
+                    |_| async {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        sleep(Duration::from_millis(50)).await;
+                        Ok(credentials.clone())
+                    },
+                    TOKEN_EXCHANGE_TIMEOUT,
+                )
+            });
+            for result in futures::future::join_all(requests).await {
+                assert_eq!(result.unwrap().unwrap(), credentials);
+            }
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+        });
+    }
+
+    #[tokio::test]
+    async fn test_storage_lock_wait_times_out_without_reading_cache() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("auth.json");
+        store_mock_credentials(&path, "acc_locked");
+        let storage = OpenAICodexAuthStorage::new(path);
+        let held_file = storage.open_locked_file().unwrap();
+
+        let error = storage
+            .open_locked_file_async(Duration::from_millis(50))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("Timed out waiting"));
+        drop(held_file);
+        assert_eq!(
+            storage.load_credentials().unwrap().unwrap().account_id,
+            "acc_locked"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_storage_refresh_timeout_releases_lock_and_preserves_cache() {
+        let directory = tempdir().unwrap();
+        let storage = OpenAICodexAuthStorage::new(directory.path().join("auth.json"));
+        let credentials = OpenAICodexCredentials {
+            access: mock_token("acc_timeout"),
+            refresh: "refresh_old".to_string(),
+            expires: 0,
+            account_id: "acc_timeout".to_string(),
+        };
+        storage.store_credentials(&credentials).unwrap();
+
+        let error = storage
+            .resolve_credentials_with_refresh(|_| std::future::pending(), Duration::from_millis(50))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("refresh timed out"));
+        assert_eq!(storage.load_credentials().unwrap().unwrap(), credentials);
     }
 
     #[test]
