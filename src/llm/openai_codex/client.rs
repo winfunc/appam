@@ -221,7 +221,10 @@ impl OpenAICodexClient {
         excluded.insert(slot);
         self.release_credential_slot(slot).await;
         warn!(
+            target: "appam::llm::openai_codex::diagnostics",
             credential_slot = slot + 1,
+            configured_slots = self.credential_pool.len(),
+            emitted_output,
             failure_category = "authentication",
             "Quarantined rejected OpenAI Codex credential"
         );
@@ -713,6 +716,13 @@ impl LlmClient for OpenAICodexClient {
                         .filter(|_| self.credential_pool.len() > 1)
                     {
                         let cooldown = retry_after.unwrap_or(DEFAULT_USAGE_LIMIT_COOLDOWN);
+                        warn!(target: "appam::llm::openai_codex::diagnostics",
+                            credential_slot = slot + 1,
+                            configured_slots = self.credential_pool.len(),
+                            http_status = status.as_u16(),
+                            cooldown_seconds = cooldown.as_secs(),
+                            failure_category = "usage_exhausted",
+                            "OpenAI Codex credential entered provider usage cooldown");
                         self.credential_pool.mark_unavailable(slot, cooldown);
                         excluded_slots.insert(slot);
                         self.release_credential_slot(slot).await;

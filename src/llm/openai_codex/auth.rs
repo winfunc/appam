@@ -67,6 +67,74 @@ const AUTH_LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(25);
 /// Bound the entire OAuth exchange, including reading the response body.
 const TOKEN_EXCHANGE_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Fixed diagnostic metadata safe to emit without error text or cache paths.
+///
+/// Context preserves the operation and typed cause when the pool handles an
+/// error. Provider bodies, credentials and account identifiers are excluded.
+#[derive(Debug, Clone, Copy)]
+struct AuthDiagnostic {
+    stage: &'static str,
+    category: &'static str,
+    http_status: Option<u16>,
+}
+
+impl std::fmt::Display for AuthDiagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.category == "timeout" {
+            return write!(f, "OpenAI Codex {} timed out", self.stage);
+        }
+        write!(f, "OpenAI Codex {} failed ({})", self.stage, self.category)?;
+        if let Some(status) = self.http_status {
+            write!(f, " (HTTP {status})")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for AuthDiagnostic {}
+
+/// Classify typed causes into bounded labels rather than logging raw errors.
+fn auth_diagnostic(stage: &'static str, error: &anyhow::Error) -> AuthDiagnostic {
+    if let Some(diagnostic) = error.downcast_ref::<AuthDiagnostic>() {
+        return AuthDiagnostic {
+            stage,
+            ..*diagnostic
+        };
+    }
+    let category = if let Some(error) = error.downcast_ref::<std::io::Error>() {
+        match error.kind() {
+            std::io::ErrorKind::NotFound => "cache_missing",
+            std::io::ErrorKind::PermissionDenied => "cache_permission_denied",
+            std::io::ErrorKind::WouldBlock => "cache_lock_busy",
+            _ => "cache_io",
+        }
+    } else if error.downcast_ref::<serde_json::Error>().is_some() {
+        "cache_invalid_json"
+    } else if error
+        .downcast_ref::<tokio::time::error::Elapsed>()
+        .is_some()
+    {
+        "timeout"
+    } else if let Some(error) = error.downcast_ref::<reqwest::Error>() {
+        if error.is_timeout() {
+            "timeout"
+        } else if error.is_connect() {
+            "network_connection"
+        } else if error.is_decode() {
+            "provider_response_invalid"
+        } else {
+            "network_request"
+        }
+    } else {
+        "other"
+    };
+    AuthDiagnostic {
+        stage,
+        category,
+        http_status: None,
+    }
+}
+
 /// Fully resolved ChatGPT OAuth credentials for the Codex provider.
 ///
 /// The `account_id` field is derived from the access token and is required by
@@ -182,8 +250,17 @@ impl OpenAICodexAuthStorage {
         F: Fn(String) -> Fut,
         Fut: std::future::Future<Output = Result<OpenAICodexCredentials>>,
     {
-        let mut file = self.open_locked_file_async(AUTH_LOCK_TIMEOUT).await?;
-        let mut data = read_auth_file(&mut file)?;
+        let mut file = self
+            .open_locked_file_async(AUTH_LOCK_TIMEOUT)
+            .await
+            .map_err(|error| {
+                let diagnostic = auth_diagnostic("cache_lock", &error);
+                error.context(diagnostic)
+            })?;
+        let mut data = read_auth_file(&mut file).map_err(|error| {
+            let diagnostic = auth_diagnostic("cache_read", &error);
+            error.context(diagnostic)
+        })?;
         let Some(existing) = data
             .get(PROVIDER_KEY)
             .cloned()
@@ -207,12 +284,20 @@ impl OpenAICodexAuthStorage {
 
         let refreshed = timeout(refresh_timeout, refresh_fn(existing.refresh.clone()))
             .await
-            .context("OpenAI Codex credential refresh timed out")??;
+            .context("OpenAI Codex credential refresh timed out")
+            .and_then(|result| result)
+            .map_err(|error| {
+                let diagnostic = auth_diagnostic("refresh", &error);
+                error.context(diagnostic)
+            })?;
         data.insert(
             PROVIDER_KEY.to_string(),
             StoredCredential::from(refreshed.clone()),
         );
-        write_auth_file(&mut file, &data)?;
+        write_auth_file(&mut file, &data).map_err(|error| {
+            let diagnostic = auth_diagnostic("cache_write", &error);
+            error.context(diagnostic)
+        })?;
         Ok(Some(refreshed))
     }
 
@@ -358,6 +443,10 @@ impl OpenAICodexCredentialPool {
             match self.storages[index].resolve_credentials().await {
                 Ok(Some(credentials)) => {
                     if self.is_rejected(index, &credentials.access) {
+                        warn!(target: "appam::llm::openai_codex::diagnostics",
+                            credential_slot = index + 1, configured_slots = self.len(),
+                            failure_category = "token_quarantined",
+                            "OpenAI Codex credential slot contains a previously rejected token");
                         failed_slots.push(index + 1);
                         continue;
                     }
@@ -370,10 +459,26 @@ impl OpenAICodexCredentialPool {
                         },
                     });
                 }
-                Ok(None) => failed_slots.push(index + 1),
-                Err(_) => {
+                Ok(None) => {
+                    warn!(target: "appam::llm::openai_codex::diagnostics",
+                        credential_slot = index + 1, configured_slots = self.len(),
+                        failure_category = "cache_credentials_missing",
+                        "OpenAI Codex credential slot has no cached credentials");
+                    failed_slots.push(index + 1);
+                }
+                Err(error) => {
+                    let diagnostic = error
+                        .downcast_ref::<AuthDiagnostic>()
+                        .copied()
+                        .unwrap_or_else(|| auth_diagnostic("resolution", &error));
                     warn!(
+                        target: "appam::llm::openai_codex::diagnostics",
                         credential_slot = index + 1,
+                        configured_slots = self.len(),
+                        failure_stage = diagnostic.stage,
+                        failure_category = diagnostic.category,
+                        http_status = diagnostic.http_status,
+                        cooldown_seconds = if self.len() > 1 { AUTH_RESOLUTION_COOLDOWN.as_secs() } else { 0 },
                         "OpenAI Codex credential slot could not be resolved"
                     );
                     if self.storages.len() > 1 {
@@ -385,6 +490,10 @@ impl OpenAICodexCredentialPool {
         }
 
         if failed_slots.is_empty() {
+            warn!(target: "appam::llm::openai_codex::diagnostics",
+                configured_slots = self.len(), excluded_slots = excluded.len(),
+                failure_category = "cooldown_or_request_exclusion",
+                "All configured OpenAI Codex credentials are temporarily unavailable");
             bail!("All configured OpenAI Codex credentials are temporarily unavailable");
         }
 
@@ -585,9 +694,18 @@ pub async fn resolve_openai_codex_auth_from_files(
                 });
             }
             Ok(None) => failed_slots.push(index + 1),
-            Err(_) => {
+            Err(error) => {
+                let diagnostic = error
+                    .downcast_ref::<AuthDiagnostic>()
+                    .copied()
+                    .unwrap_or_else(|| auth_diagnostic("preflight", &error));
                 warn!(
+                    target: "appam::llm::openai_codex::diagnostics",
                     credential_slot = index + 1,
+                    configured_slots = auth_files.len(),
+                    failure_stage = diagnostic.stage,
+                    failure_category = diagnostic.category,
+                    http_status = diagnostic.http_status,
                     "OpenAI Codex credential slot failed preflight"
                 );
                 failed_slots.push(index + 1);
@@ -899,7 +1017,12 @@ async fn exchange_token_form(
 
     if !response.status().is_success() {
         let status = response.status();
-        bail!("OpenAI Codex token exchange failed ({})", status);
+        return Err(AuthDiagnostic {
+            stage: "token_exchange",
+            category: "provider_rejected",
+            http_status: Some(status.as_u16()),
+        }
+        .into());
     }
 
     let payload: TokenResponse = response
@@ -1174,6 +1297,118 @@ struct ParsedAuthorizationInput {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[derive(Clone)]
+    struct DiagnosticWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for DiagnosticWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn pool_diagnostic_logs_include_slot_and_stage_without_cache_contents() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("private-account-cache.json");
+        std::fs::write(&path, "invalid synthetic_secret_token").unwrap();
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let writer = DiagnosticWriter(output.clone());
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter("appam::llm::openai_codex::diagnostics=warn")
+            .with_ansi(false)
+            .without_time()
+            .with_writer(move || writer.clone())
+            .finish();
+        let pool = OpenAICodexCredentialPool::new(vec![path]);
+        tracing::subscriber::with_default(subscriber, || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            assert!(runtime
+                .block_on(pool.resolve(None, &HashSet::new()))
+                .is_err());
+        });
+        let text = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        assert!(text.contains("credential_slot=1"));
+        assert!(text.contains("configured_slots=1"));
+        assert!(text.contains("cache_read"));
+        assert!(text.contains("cache_invalid_json"));
+        assert!(!text.contains("synthetic_secret_token"));
+        assert!(!text.contains("private-account-cache"));
+        assert!(!text.contains(&dir.path().display().to_string()));
+    }
+
+    #[test]
+    fn auth_diagnostics_preserve_stage_status_and_hide_raw_errors() {
+        let rejected = anyhow::Error::new(AuthDiagnostic {
+            stage: "token_exchange",
+            category: "provider_rejected",
+            http_status: Some(401),
+        })
+        .context("provider body contains secret_token and private_account");
+        let diagnostic = auth_diagnostic("refresh", &rejected);
+        assert_eq!(diagnostic.stage, "refresh");
+        assert_eq!(diagnostic.category, "provider_rejected");
+        assert_eq!(diagnostic.http_status, Some(401));
+        assert_eq!(
+            diagnostic.to_string(),
+            "OpenAI Codex refresh failed (provider_rejected) (HTTP 401)"
+        );
+
+        let denied = anyhow::Error::new(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "private/cache/path secret_token",
+        ))
+        .context("failed to open private/cache/path");
+        let diagnostic = auth_diagnostic("cache_lock", &denied);
+        assert_eq!(diagnostic.category, "cache_permission_denied");
+        assert!(!diagnostic.to_string().contains("private"));
+        assert!(!diagnostic.to_string().contains("secret_token"));
+    }
+
+    #[tokio::test]
+    async fn auth_diagnostics_distinguish_refresh_and_cache_failures() {
+        let dir = tempdir().unwrap();
+        let storage = OpenAICodexAuthStorage::new(dir.path().join("auth.json"));
+        storage
+            .store_credentials(&OpenAICodexCredentials {
+                access: mock_token("test"),
+                refresh: "synthetic_refresh".into(),
+                expires: 1,
+                account_id: "test".into(),
+            })
+            .unwrap();
+        let error = storage
+            .resolve_credentials_with_refresh(
+                |_| async {
+                    Err(AuthDiagnostic {
+                        stage: "token_exchange",
+                        category: "provider_rejected",
+                        http_status: Some(403),
+                    }
+                    .into())
+                },
+                Duration::from_secs(1),
+            )
+            .await
+            .unwrap_err();
+        let diagnostic = error.downcast_ref::<AuthDiagnostic>().unwrap();
+        assert_eq!(diagnostic.stage, "refresh");
+        assert_eq!(diagnostic.http_status, Some(403));
+
+        std::fs::write(&storage.path, b"invalid secret_token json").unwrap();
+        let error = storage.resolve_credentials().await.unwrap_err();
+        let diagnostic = error.downcast_ref::<AuthDiagnostic>().unwrap();
+        assert_eq!(diagnostic.stage, "cache_read");
+        assert_eq!(diagnostic.category, "cache_invalid_json");
+        assert!(!diagnostic.to_string().contains("secret_token"));
+    }
 
     fn mock_token(account_id: &str) -> String {
         let header = URL_SAFE_NO_PAD.encode(r#"{"alg":"none"}"#);
