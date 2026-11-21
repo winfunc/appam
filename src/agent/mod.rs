@@ -121,6 +121,14 @@ pub trait Agent: Send + Sync {
         2
     }
 
+    /// Return the hard USD cap for one session, if any.
+    ///
+    /// When set, the runtime stops before the next LLM request once the
+    /// session's tracked cost reaches this amount. Default is `None` (no cap).
+    fn max_session_cost_usd(&self) -> Option<f64> {
+        None
+    }
+
     /// Return the custom continuation message, if any.
     ///
     /// If `Some`, this message will be injected when the session ends without

@@ -331,6 +331,26 @@ fn handle_required_completion_gap<A: Agent + ?Sized>(
     }
 }
 
+/// Book the session's tracked cost on its USD cap and refuse the next request once the cap is spent.
+fn enforce_session_cost_cap(
+    budget: Option<&llm_budget::AgentBudget>,
+    tracker: &crate::llm::usage::UsageTracker,
+) -> Result<()> {
+    let Some(budget) = budget else {
+        return Ok(());
+    };
+    let total = tracker.get_snapshot().total_cost_usd;
+    budget.charge_usd_force(total - budget.spent_usd(), llm_budget::ChargeContext::new());
+    if budget.is_exhausted() {
+        anyhow::bail!(
+            "session cost ${:.4} reached max_session_cost_usd ${:.4}",
+            budget.spent_usd(),
+            budget.limit_usd()
+        );
+    }
+    Ok(())
+}
+
 fn emit_stream_error_event(
     consumer: &MultiConsumer,
     client: &DynamicLlmClient,
@@ -859,8 +879,18 @@ pub async fn default_run_streaming<A: Agent + ?Sized>(
 
     let emitted_tool_calls = Arc::new(Mutex::new(HashSet::<String>::new()));
 
+    let session_budget = agent
+        .max_session_cost_usd()
+        .map(|limit| llm_budget::AgentBudget::builder(agent.name(), limit).build())
+        .transpose()?;
+
     // Multi-round tool-calling loop
     loop {
+        if let Err(error) = enforce_session_cost_cap(session_budget.as_ref(), &usage_tracker) {
+            emit_stream_error_event(&multi_consumer, &client, &error);
+            return Err(error);
+        }
+
         let mut streamed_text = String::new();
         let mut reasoning_text = String::new();
         let mut pending_tool_calls: Vec<crate::llm::ToolCall> = Vec::new();
@@ -1289,8 +1319,18 @@ pub async fn default_run_streaming_with_messages<A: Agent + ?Sized>(
 
     let emitted_tool_calls = Arc::new(Mutex::new(HashSet::<String>::new()));
 
+    let session_budget = agent
+        .max_session_cost_usd()
+        .map(|limit| llm_budget::AgentBudget::builder(agent.name(), limit).build())
+        .transpose()?;
+
     // Multi-round tool-calling loop
     loop {
+        if let Err(error) = enforce_session_cost_cap(session_budget.as_ref(), &usage_tracker) {
+            emit_stream_error_event(&multi_consumer, &client, &error);
+            return Err(error);
+        }
+
         let mut streamed_text = String::new();
         let mut reasoning_text = String::new();
         let mut pending_tool_calls: Vec<crate::llm::ToolCall> = Vec::new();
@@ -1942,8 +1982,18 @@ async fn continue_loaded_session_streaming<A: Agent + ?Sized>(
 
     let emitted_tool_calls = Arc::new(Mutex::new(HashSet::<String>::new()));
 
+    let session_budget = agent
+        .max_session_cost_usd()
+        .map(|limit| llm_budget::AgentBudget::builder(agent.name(), limit).build())
+        .transpose()?;
+
     // Multi-round tool-calling loop (same as default_run_streaming)
     loop {
+        if let Err(error) = enforce_session_cost_cap(session_budget.as_ref(), &usage_tracker) {
+            emit_stream_error_event(&multi_consumer, &client, &error);
+            return Err(error);
+        }
+
         let mut streamed_text = String::new();
         let mut reasoning_text = String::new();
         let mut pending_tool_calls: Vec<crate::llm::ToolCall> = Vec::new();
@@ -2526,6 +2576,33 @@ mod tests {
             },
         );
         assert_eq!(selected, "claude-opus-4-6");
+    }
+
+    #[test]
+    fn session_cost_cap_stops_once_tracked_spend_reaches_limit() {
+        use super::enforce_session_cost_cap;
+        use crate::agent::Agent;
+
+        let agent = AgentBuilder::new("cost-cap-test")
+            .system_prompt("Test")
+            .max_session_cost_usd(0.05)
+            .build()
+            .expect("agent should build");
+        let budget =
+            llm_budget::AgentBudget::builder(agent.name(), agent.max_session_cost_usd().unwrap())
+                .build()
+                .unwrap();
+        let tracker = crate::llm::usage::UsageTracker::new();
+
+        tracker.inner.lock().unwrap().total_cost_usd = 0.03;
+        assert!(enforce_session_cost_cap(Some(&budget), &tracker).is_ok());
+
+        tracker.inner.lock().unwrap().total_cost_usd = 0.06;
+        let error = enforce_session_cost_cap(Some(&budget), &tracker).unwrap_err();
+        assert!(error.to_string().contains("max_session_cost_usd"));
+        assert!((budget.spent_usd() - 0.06).abs() < 1e-9);
+
+        assert!(enforce_session_cost_cap(None, &tracker).is_ok());
     }
 
     #[test]

@@ -160,6 +160,7 @@ pub struct AgentBuilder {
     // Session continuation configuration
     required_completion_tools: Vec<Arc<dyn Tool>>,
     max_continuations: usize,
+    max_session_cost_usd: Option<f64>,
     continuation_message: Option<String>,
 
     // Server-side context compaction configuration
@@ -227,6 +228,7 @@ impl AgentBuilder {
             max_concurrent_tool_executions: 1,
             required_completion_tools: Vec::new(),
             max_continuations: 2,
+            max_session_cost_usd: None,
             continuation_message: None,
             compaction: None,
         }
@@ -1192,6 +1194,12 @@ impl AgentBuilder {
         self
     }
 
+    /// Stop the session before the next LLM request once its cost reaches `usd`.
+    pub fn max_session_cost_usd(mut self, usd: f64) -> Self {
+        self.max_session_cost_usd = Some(usd);
+        self
+    }
+
     /// Set a custom continuation message.
     ///
     /// This message is injected when the session ends without calling required
@@ -1598,6 +1606,7 @@ impl AgentBuilder {
             self.history_auto_save,
             required_tool_names,
             self.max_continuations,
+            self.max_session_cost_usd,
             self.continuation_message,
             self.provider_parallel_tool_calls,
             self.max_concurrent_tool_executions,
