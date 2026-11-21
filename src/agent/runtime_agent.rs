@@ -107,6 +107,8 @@ pub struct RuntimeAgent {
     required_completion_tools: Option<Vec<String>>,
     /// Maximum continuation attempts (default: 2)
     max_continuations: usize,
+    /// Hard USD cap for one session (default: none)
+    max_session_cost_usd: Option<f64>,
     /// Custom continuation message (if None, uses default)
     continuation_message: Option<String>,
     /// Whether provider-side parallel tool batching should be enabled.
@@ -186,6 +188,7 @@ impl RuntimeAgent {
             history_auto_save: None,
             required_completion_tools: None,
             max_continuations: 2,
+            max_session_cost_usd: None,
             continuation_message: None,
             provider_parallel_tool_calls: false,
             max_concurrent_tool_executions: 1,
@@ -239,6 +242,7 @@ impl RuntimeAgent {
         history_auto_save: Option<bool>,
         required_completion_tools: Option<Vec<String>>,
         max_continuations: usize,
+        max_session_cost_usd: Option<f64>,
         continuation_message: Option<String>,
         provider_parallel_tool_calls: bool,
         max_concurrent_tool_executions: usize,
@@ -286,6 +290,7 @@ impl RuntimeAgent {
             history_auto_save,
             required_completion_tools,
             max_continuations,
+            max_session_cost_usd,
             continuation_message,
             provider_parallel_tool_calls,
             max_concurrent_tool_executions: max_concurrent_tool_executions.max(1),
@@ -427,6 +432,10 @@ impl Agent for RuntimeAgent {
 
     fn max_continuations(&self) -> usize {
         self.max_continuations
+    }
+
+    fn max_session_cost_usd(&self) -> Option<f64> {
+        self.max_session_cost_usd
     }
 
     fn continuation_message(&self) -> Option<&str> {
